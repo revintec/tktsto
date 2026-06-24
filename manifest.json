@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "description": "__MSG_extDescription__",
-  "version": "{VERSION}",
+  "version": "0.1.181.0",
   "author": "ToyKeeper",
   "homepage_url": "https://toykeeper.net/tktsto",
   "default_locale": "en",
