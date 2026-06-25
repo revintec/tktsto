@@ -347,6 +347,17 @@ foo {
   border-left: 2px solid var(--tree-line-cursor);
 }
 
+/* single-child flattening:
+ * if a node has exactly one child, display that child as a sibling --
+ * drop the indentation of its (one-item) child list so the lone child
+ * lines up with its parent's row instead of nesting beneath it.
+ * (chains of single children all collapse onto the same level) */
+.nodes:not(.root-nodes):has(> .node:only-child) {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
 /* outer structure...
  * #tree-root.nodes.root-nodes
  *   #noderoot.node.root-nodes
@@ -602,6 +613,14 @@ foo {
 }
 #tree-view .collapsed .node-stats {
   display: unset;
+}
+/* ...but a single-child *tab* is flattened (its lone child is shown as a
+ * sibling), so its own tab counter is redundant -- hide it.  (needs the
+ * #tree-view id to outrank the ".collapsed .node-stats" rule above)
+ * non-tab nodes (windows, headings, ...) keep their counter and follow the
+ * normal collapsed/config visibility rules above. */
+#tree-view .node.tab:has(> .nodes:not(.root-nodes) > .node:only-child) > .row .node-stats {
+  display: none;
 }
 
 .node-stats {
@@ -929,6 +948,19 @@ foo {
 
 #hover-menu .mark-button, .mark-button {
   color: var(--marked-count-color);
+}
+
+#hover-menu .flatten-button, .flatten-button {
+  color: var(--label-loaded-fg);
+}
+/* flatten button color encodes which action it will perform */
+#hover-menu .flatten-button.flatten-collapse, .flatten-button.flatten-collapse {
+  /* green: collapse this node's whole subtree inward */
+  color: #3ad13a;
+}
+#hover-menu .flatten-button.flatten-hoist, .flatten-button.flatten-hoist {
+  /* magenta: hoist a lone flat level up to become siblings */
+  color: #e25be2;
 }
 
 /******************** drag-n-drop ********************/
