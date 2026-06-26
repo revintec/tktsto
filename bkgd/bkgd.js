@@ -13,6 +13,7 @@ import { Config } from '/common/config.js';
 import { IdGenerator } from '/common/id-generator.js';
 import * as sidepanel from './sidepanel.js';
 import { TreeStore } from './treestore.js';
+import { TxnStore } from './txnstore.js';
 import { base32encode } from '/common/base32.js';
 import { createNewUserTutorialNodes } from '/bkgd/new-user.js';
 
@@ -100,6 +101,10 @@ class Bkgd {
       this.tree.init().then(() => {
         debug('Bkgd.resolveTreeDbLoaded()');
         this.resolveTreeDbLoaded();  // let listeners know the IDB is loaded
+        // load the transaction log (undo/redo history) now that the tree
+        // and its database are ready
+        this.txns = new TxnStore(this);
+        this.txns.init();
         // TODO: use tree node dict as idGen ID cache
         // TODO: make IdGenerator check a cache to avoid duplicates
         //this.idGen.cache = this.tree.nodes;
@@ -758,6 +763,52 @@ class Bkgd {
     const response = {};
     response.nodes = this.tree.serializeNodes();
     return response;
+  }
+
+  // ---- transactions / undo / redo ---------------------------------------
+  // The TreeViews never touch the transaction log directly; they just send
+  // these requests and let the worker do everything (record the change,
+  // invert it, keep the undo/redo history, and sync the result to views).
+
+  // delete a node as a recorded, undoable transaction.
+  // msg.style is 'whole' or 'promote'
+  async bkgd_deleteNode (msg) {
+    await this.treeLoaded;
+    const node = this.tree.nodes[msg.nodeId];
+    if (! node) {
+      const err = `bkgd_deleteNode(): no node found: "${msg.nodeId}"`;
+      warn(err);
+      return { error: err };
+    }
+    const result = await this.txns.recordDelete(node, msg.style);
+    this.broadcastUndoState();
+    return result;
+  }
+
+  async bkgd_undo (msg) {
+    await this.treeLoaded;
+    const result = await this.txns.undo();
+    this.broadcastUndoState();
+    return result;
+  }
+
+  async bkgd_redo (msg) {
+    await this.treeLoaded;
+    const result = await this.txns.redo();
+    this.broadcastUndoState();
+    return result;
+  }
+
+  async bkgd_getUndoState (msg) {
+    await this.treeLoaded;
+    return this.txns.undoState();
+  }
+
+  // tell every open TreeView whether undo/redo are currently available,
+  // so they can grey out their buttons to match
+  broadcastUndoState () {
+    if (! this.txns) return;
+    emit('tree_undoState', this.txns.undoState());
   }
 
   async bkgd_generateTutorial (msg) {

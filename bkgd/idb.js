@@ -101,12 +101,48 @@ export class IDB {
     return this.loadObj(this.snapDbName, sessionName);
   }
 
-  saveSnapshot (sessionName, tree) {
-    return saveObj(this.snapDbName, sessionName, tree.serializeNodes());
+  saveSnapshot (sessionName, nodes) {
+    return this.saveObj(this.snapDbName, sessionName, nodes);
   }
 
   deleteSnapshot (sessionName) {
     return this.deleteObj(this.snapDbName, sessionName);
+  }
+
+  // ---- transaction log (append-only revision history) ------------------
+
+  loadTxn (key) {
+    return this.loadObj(this.txnDbName, key);
+  }
+
+  saveTxn (rev) {
+    return this.saveObj(this.txnDbName, rev.key, rev);
+  }
+
+  deleteTxn (key) {
+    return this.deleteObj(this.txnDbName, key);
+  }
+
+  // load every revision, sorted oldest-first (IDB cursors walk keys in
+  // ascending order, and revision keys are time-sortable)
+  async loadAllTxns () {
+    const db = await this.db;
+    return new Promise((resolve, reject) => {
+      const txn = db.transaction(this.txnDbName, 'readonly');
+      const store = txn.objectStore(this.txnDbName);
+      const revisions = [];
+      const request = store.openCursor();
+      request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (cursor) {
+          revisions.push(JSON.parse(cursor.value.data));
+          cursor.continue();
+        } else {
+          resolve(revisions);
+        }
+      };
+      request.onerror = (event) => reject(event.target.error);
+    });
   }
 
   // load an individual object

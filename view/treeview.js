@@ -69,7 +69,15 @@ export class TreeView extends Tree {
 
     this.$viewScopeBtn = doc.getElementById('view-scope-btn');
 
-    // zoom buttons
+    // undo / redo buttons (they merely ask the service worker to do the
+    // work; all the transaction/undo logic lives there)
+    this.$undoBtn = doc.getElementById('undo-btn');
+    this.$redoBtn = doc.getElementById('redo-btn');
+    // latest undo/redo availability, as reported by the service worker
+    this.canUndo = false;
+    this.canRedo = false;
+
+    // zoom buttons (kept compact, alongside undo/redo)
     this.$zoomOutBtn = doc.getElementById('zoom-out-btn');
     this.$zoomInBtn = doc.getElementById('zoom-in-btn');
     // number of steps per "octave"
@@ -207,6 +215,8 @@ export class TreeView extends Tree {
 
       await this.detectTabOrSidepanel();
       this.registerWithBkgd();
+      // sync the undo/redo buttons with the worker's current history
+      this.refreshUndoState();
     }
 
     this.$renderViewScopeBtn();
@@ -1221,7 +1231,7 @@ export class TreeView extends Tree {
     // if leaf, just delete it... simple
     if (cursor.isLeaf()) {
       //debug('delete leaf node');
-      await toDelete.deleteSelf({ reason: 'userAction' });
+      await this.requestDelete(toDelete, 'whole');
       this.setStatus(`deleted ${line}`);
     }
     // don't delete an open window; unload it instead
@@ -1245,7 +1255,7 @@ export class TreeView extends Tree {
         dStyle = result.button.toLowerCase();
       }
       if ('one' === dStyle) {
-        await toDelete.deleteSelfAndPromoteKids({ reason: 'userAction' });
+        await this.requestDelete(toDelete, 'promote');
         this.setStatus(`deleted ${line}`);
       }
       //else if ('row1' === dStyle) {
@@ -1254,7 +1264,7 @@ export class TreeView extends Tree {
       //  this.setStatus(`deleted ${line}`);
       //}
       else if ('all' === dStyle) {
-        await toDelete.deleteSelf({ reason: 'userAction' });
+        await this.requestDelete(toDelete, 'whole');
         this.setStatus(`deleted ${numToDelete} nodes`);
       }
     }
@@ -1273,9 +1283,17 @@ export class TreeView extends Tree {
       // abort if user cancelled
       if ((!result) || ('OK' !== result.button)) return;
       // otherwise, actually delete it
-      await toDelete.deleteSelf({ reason: 'userAction' });
+      await this.requestDelete(toDelete, 'whole');
       this.setStatus(`deleted ${numToDelete} nodes`);
     }
+  }
+
+  // Ask the service worker to delete a node as a recorded, undoable
+  // transaction.  The worker mutates the canonical tree and emits the usual
+  // tree_* events, so this view (and any others) update themselves; we don't
+  // touch the tree directly here.  style is 'whole' or 'promote'.
+  async requestDelete (node, style) {
+    return await emit('bkgd_deleteNode', { nodeId: node.id, style });
   }
 
   async action_unloadNode (event) {
@@ -2560,6 +2578,13 @@ export class TreeView extends Tree {
     this.$treeViewInTabBtn.addEventListener('click', () => {
       this.onTreeViewInTabBtnClick();
     });
+    // undo / redo (just ask the service worker to do it)
+    if (this.$undoBtn) this.$undoBtn.addEventListener('click', () => {
+      this.onUndoBtnClick();
+    });
+    if (this.$redoBtn) this.$redoBtn.addEventListener('click', () => {
+      this.onRedoBtnClick();
+    });
     // zoom in and out
     this.$zoomOutBtn.addEventListener('click', () => {
       this.onZoomBtn(-1);
@@ -2616,6 +2641,66 @@ export class TreeView extends Tree {
     const label = this.viewScope.charAt(0).toUpperCase()
       + this.viewScope.slice(1);
     this.$viewScopeBtn.innerText = label;
+  }
+
+  // ---- undo / redo ------------------------------------------------------
+  // These just relay a request to the service worker, which owns the
+  // transaction log and does the actual work; the tree then updates via the
+  // usual tree_* events, and tree_undoState() re-renders the buttons.
+
+  onUndoBtnClick () { return this.action_undo({ type: 'click' }); }
+  onRedoBtnClick () { return this.action_redo({ type: 'click' }); }
+
+  async action_undo (event) {
+    const result = await emit('bkgd_undo', {});
+    return this.applyUndoResult(result);
+  }
+
+  async action_redo (event) {
+    const result = await emit('bkgd_redo', {});
+    return this.applyUndoResult(result);
+  }
+
+  async applyUndoResult (result) {
+    if (! result) return;
+    // the worker may hand back a status note (e.g. "restored to root")
+    if (result.note) this.setStatus(result.note);
+    // ...and where to put the cursor (the just-restored node).  the node
+    // arrives via a separate tree_nodeAdded event, which may not have been
+    // processed yet, so wait briefly for it to show up.
+    if (result.cursorId) await this.setCursorWhenReady(result.cursorId);
+  }
+
+  async setCursorWhenReady (nodeId, tries = 20) {
+    for (let i = 0; i < tries; i++) {
+      const node = this.nodes[nodeId];
+      if (node) return this.setCursor(node);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
+  // ask the worker whether undo/redo are currently possible, and sync the
+  // buttons to match (used at startup)
+  async refreshUndoState () {
+    const state = await emit('bkgd_getUndoState', {});
+    if (! state) return;
+    this.canUndo = !! state.canUndo;
+    this.canRedo = !! state.canRedo;
+    this.$renderUndoRedoBtns();
+  }
+
+  // pushed by the worker whenever the undo/redo history changes
+  async tree_undoState (msg) {
+    this.canUndo = !! msg.canUndo;
+    this.canRedo = !! msg.canRedo;
+    this.$renderUndoRedoBtns();
+  }
+
+  $renderUndoRedoBtns () {
+    if (this.$undoBtn)
+      this.$undoBtn.classList.toggle('greyed-out', ! this.canUndo);
+    if (this.$redoBtn)
+      this.$redoBtn.classList.toggle('greyed-out', ! this.canRedo);
   }
 
   action_detailsButton (event) {
@@ -2825,6 +2910,10 @@ export const keyBindings = {
   'U': 'unloadNode',
   'O': 'addNodeAsNextVisibleRow',
   'Shift+O': 'addNodeAsPrevVisibleRow',
+  ///// undo / redo (handled by the service worker)
+  'Ctrl+Z': 'undo',
+  'Shift+Ctrl+Z': 'redo',
+  'Ctrl+Y': 'redo',
   ///// edit nodes
   'Space': 'toggleExpanded',
   'E': 'editNode',
