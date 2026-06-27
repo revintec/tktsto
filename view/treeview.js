@@ -38,6 +38,8 @@ export class TreeView extends Tree {
       nodesPerPage: 20,
       doubleClickMs: 500,
       treeViewZoomLevel: 1.0,
+      hideZoomButtons: false,
+      flattenLoneChild: true,
       alwaysShowNodeStats: true,
       wasLoadedNodeStats: true,
       hideTopButtonsDuringSearch: false,
@@ -84,6 +86,9 @@ export class TreeView extends Tree {
     this.zoomSteps = 12;
     this.zoomMax = 3;
     this.zoomMin = 1 / this.zoomMax;
+    // optional toggle shown in place of the zoom buttons; flips the
+    // "flatten lone child" display (a node's only child shown as a sibling)
+    this.$flattenLoneChildBtn = doc.getElementById('flatten-lone-child-btn');
 
     this.$searchBar = doc.getElementById('search-bar');
     this.$searchEntry = doc.getElementById('search-entry');
@@ -166,6 +171,15 @@ export class TreeView extends Tree {
       this.cfg.watch('treeViewZoomLevel',
         (key, newVal, oldVal) => this.setZoomLevel(newVal, oldVal));
       this.setZoomLevel(this.cfg.treeViewZoomLevel, this.cfg.treeViewZoomLevel);
+
+      // top bar shows either the zoom "+/-" buttons or, when the user opts
+      // to hide them, a single "Flat" toggle for the flatten-lone-child
+      // display.  render the current state and keep it in sync with config.
+      this.$renderZoomButtons();
+      this.$renderFlattenLoneChildBtn();
+      this.cfg.watch('hideZoomButtons', () => this.$renderZoomButtons());
+      this.cfg.watch('flattenLoneChild',
+        () => this.$renderFlattenLoneChildBtn());
 
       // clear "expanded" overrides when this option is turned off
       this.cfg.watch('activeTabExpandsItsParents',
@@ -2648,6 +2662,12 @@ export class TreeView extends Tree {
     this.$zoomInBtn.addEventListener('click', () => {
       this.onZoomBtn(1);
     });
+    // flatten-lone-child toggle (shown in place of the zoom buttons)
+    if (this.$flattenLoneChildBtn) {
+      this.$flattenLoneChildBtn.addEventListener('click', () => {
+        this.onFlattenLoneChildBtnClick();
+      });
+    }
     // when details-btn clicked, toggle the details box
     this.$detailsBtn.addEventListener('click', () => {
       this.onDetailsBtnClick();
@@ -2977,6 +2997,33 @@ export class TreeView extends Tree {
       if (zoomLevel <= this.zoomMin) this.$zoomOutBtn.classList.add(grey);
       else this.$zoomOutBtn.classList.remove(grey);
     }
+  }
+
+  // show either the zoom "+/-" buttons or the "flatten lone child" toggle,
+  // depending on the hideZoomButtons option
+  $renderZoomButtons () {
+    const hide = !! this.cfg.hideZoomButtons;
+    if (this.$zoomOutBtn) this.$zoomOutBtn.classList.toggle('hidden', hide);
+    if (this.$zoomInBtn) this.$zoomInBtn.classList.toggle('hidden', hide);
+    // the flatten toggle takes their place when the zoom buttons are hidden
+    if (this.$flattenLoneChildBtn)
+      this.$flattenLoneChildBtn.classList.toggle('hidden', ! hide);
+  }
+
+  // reflect the flattenLoneChild state on the toggle button (pressed = on)
+  $renderFlattenLoneChildBtn () {
+    if (! this.$flattenLoneChildBtn) return;
+    this.$flattenLoneChildBtn.classList.toggle(
+      'pressed', !! this.cfg.flattenLoneChild);
+  }
+
+  onFlattenLoneChildBtnClick () {
+    // flip the flatten-lone-child display; the themed page watches this
+    // config key and toggles the body class that gates the CSS
+    const newVal = ! this.cfg.flattenLoneChild;
+    this.cfg.set('flattenLoneChild', newVal);
+    this.$renderFlattenLoneChildBtn();
+    this.setStatus(`Flatten lone child: ${newVal ? 'on' : 'off'}`);
   }
 
   onBackupBtnClick () {

@@ -28,6 +28,7 @@ export class ThemedPage {
       hideTreeLines: false,
       hideCursorTreeLines: false,
       hideWindowTreeLines: true,
+      flattenLoneChild: true,
       fontFamily: '',
       indentMargin: '',
       indentMarginWindow: '',
@@ -48,6 +49,7 @@ export class ThemedPage {
     this.updateTheme();
     this.updateStyleOptions();
     this.updateUserStyles();
+    this.updateBodyClasses();
 
     // config watchers
     this.cfg.watch('theme', (key, newVal, oldVal) => {
@@ -55,6 +57,9 @@ export class ThemedPage {
     });
     this.cfg.watch('userStyles', (key, newVal, oldVal) => {
       this.updateUserStyles();
+    });
+    this.cfg.watch('flattenLoneChild', (key, newVal, oldVal) => {
+      this.updateBodyClasses();
     });
     for (const option of [
       'expandedRowPrefix',
@@ -221,6 +226,14 @@ export class ThemedPage {
     let styleText = '';
     if (this.cfg.userStyles) styleText = this.cfg.userStyles;
     this.$userStyles.textContent = styleText;
+  }
+
+  updateBodyClasses () {
+    // body classes that gate purely-visual CSS toggles
+    // flatten-lone-child: show a node's only child as a sibling instead of
+    // nesting it (the CSS rules live in the theme; this just turns them on)
+    this.$doc.body.classList.toggle(
+      'flatten-lone-child', !! this.cfg.flattenLoneChild);
   }
 
 }

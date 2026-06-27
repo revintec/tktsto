@@ -32,6 +32,7 @@ class OptionsPage extends ThemedPage {
       hideTreeLines: false,
       hideCursorTreeLines: false,
       hideWindowTreeLines: true,
+      flattenLoneChild: true,
       fontFamily: '',
       indentMargin: '',
       indentMarginWindow: '',
@@ -49,6 +50,7 @@ class OptionsPage extends ThemedPage {
       pinnedTabsOpenNewTabsPinnedToo: false,
       convertFromWindowWhenDroppedIntoWindow: true,
       hideTopButtonsDuringSearch: false,
+      hideZoomButtons: false,
       hideCollapsedTabs: false,
       loadExpandedBranchStyle: 'ask',
       loadCollapsedBranchStyle: 'ask',
@@ -175,6 +177,10 @@ class OptionsPage extends ThemedPage {
       }),
       new Option(this, {
         cfgKey: 'hideTopButtonsDuringSearch',
+        inputType: 'checkbox',
+      }),
+      new Option(this, {
+        cfgKey: 'hideZoomButtons',
         inputType: 'checkbox',
       }),
       new Option(this, {
