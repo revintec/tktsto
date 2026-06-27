@@ -9,7 +9,7 @@
 .cursor.row .node-stats,
 foo {
   /* color: var(--cursor-fg-override); */
-  filter: saturate(0.666) brightness(1.75);
+  /*filter: saturate(0.666) brightness(1.75);*/
 }
 
 :root {
