@@ -7,6 +7,12 @@ What changed, and when?  You know the drill.
 
 Changes:
 
+- New option (Tree View behavior): hide the zoom `-` / `+` buttons at the top
+  of the sidebar and replace them with a `Flat` toggle that turns the
+  "flatten lone child" display on and off.  When on, a node with exactly one
+  child shows that child on its parent's row instead of nesting it.  The zoom
+  buttons stay visible by default, so nothing changes unless you opt in.
+
 - Favicons!  On Chromium browsers, the tree now shows each page's favicon.
   Icons come from the browser's own favicon cache (the `_favicon` API), served
   from the extension's own origin, rather than loading each site's favicon URL

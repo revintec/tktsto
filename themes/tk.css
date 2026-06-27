@@ -351,8 +351,10 @@ foo {
  * if a node has exactly one child, display that child as a sibling --
  * drop the indentation of its (one-item) child list so the lone child
  * lines up with its parent's row instead of nesting beneath it.
- * (chains of single children all collapse onto the same level) */
-.nodes:not(.root-nodes):has(> .node:only-child) {
+ * (chains of single children all collapse onto the same level)
+ * gated on body.flatten-lone-child so it can be toggled off (see the
+ * "flattenLoneChild" config option / the top-bar "Flat" toggle button) */
+body.flatten-lone-child .nodes:not(.root-nodes):has(> .node:only-child) {
   margin-left: 0;
   padding-left: 0;
   border-left: 0;
@@ -635,8 +637,9 @@ foo {
  * sibling), so its own tab counter is redundant -- hide it.  (needs the
  * #tree-view id to outrank the ".collapsed .node-stats" rule above)
  * non-tab nodes (windows, headings, ...) keep their counter and follow the
- * normal collapsed/config visibility rules above. */
-#tree-view .node.tab:has(> .nodes:not(.root-nodes) > .node:only-child) > .row .node-stats {
+ * normal collapsed/config visibility rules above.
+ * only applies while flattening is on (body.flatten-lone-child). */
+body.flatten-lone-child #tree-view .node.tab:has(> .nodes:not(.root-nodes) > .node:only-child) > .row .node-stats {
   display: none;
 }
 
