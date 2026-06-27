@@ -1525,6 +1525,12 @@ export class TreeView extends Tree {
     }
   }
 
+  async action_loadOrFocusNode (event) {
+    // like loadOrEditNode, but never opens the edit dialog
+    // (used by double-click, so a stray double-click can't trigger an edit)
+    return this.action_loadOrEditNode(event, false);
+  }
+
   action_toggleExpanded (event) {
     debug('action_toggleExpanded()');
     // skip no-op cases
@@ -2891,8 +2897,9 @@ export const mouseBindings = {
   'MouseDragOver': 'mouseDragOver',
   // do nothing on 'click' event
   'MouseClickLeft': 'rejectEvent',
-  // double click does the same thing as 'Enter'
-  'MouseDblClickLeft': 'loadOrEditNode',
+  // double click loads or focuses a node, but never opens the edit dialog
+  // (unlike 'Enter', which still edits notes / focused tabs / windows)
+  'MouseDblClickLeft': 'loadOrFocusNode',
   // place cursor and maybe expand/collapse node
   'MousePressLeft': 'mousePressLeft',
   // allow middle click to pass as-is, and open link in a new tab
