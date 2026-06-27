@@ -2263,6 +2263,9 @@ export class TreeView extends Tree {
     if (! this.$hoverMenuMark) {
       this.$hoverMenuMark = makeBtn(this, 'mark-button', 'M', 'toggleMarked');
     }
+    if (! this.$hoverMenuFlatten) {
+      this.$hoverMenuFlatten = makeBtn(this, 'flatten-button', 'F', 'flattenNode');
+    }
     if (! this.$hoverMenuDelete) {
       this.$hoverMenuDelete = makeBtn(this, 'delete-button', 'D', 'deleteNode');
     }
@@ -2321,6 +2324,21 @@ export class TreeView extends Tree {
     if (mouseNode.isMarkable())
       this.$hoverMenuMark.style.display = 'inline-block';
     else this.$hoverMenuMark.style.display = 'none';
+
+    // show or hide the 'flatten' button, and color it by what it'll do:
+    // green ('flatten-collapse') = collapse this node's subtree inward,
+    // magenta ('flatten-hoist') = hoist a lone flat level up to siblings
+    if (mouseNode.isFlattenable()) {
+      this.$hoverMenuFlatten.style.display = 'inline-block';
+      if (mouseNode.hasGrandKids()) {
+        this.$hoverMenuFlatten.classList.add('flatten-collapse');
+        this.$hoverMenuFlatten.classList.remove('flatten-hoist');
+      } else {
+        this.$hoverMenuFlatten.classList.add('flatten-hoist');
+        this.$hoverMenuFlatten.classList.remove('flatten-collapse');
+      }
+    }
+    else this.$hoverMenuFlatten.style.display = 'none';
 
     // show or hide the 'delete' button
     if (mouseNode.isDeletable())
@@ -2717,6 +2735,42 @@ export class TreeView extends Tree {
     this.undoStack.push(entry);
     this.$renderUndoRedoBtns();
     this.setStatus(note || `redid: ${entry.label}`);
+  }
+
+  async action_flattenNode (event) {
+    debug('flattenNode');
+    // choose mouse or keyboard cursor based on event type
+    let cursor = this.whichCursor(event);
+    // skip no-op cases
+    if (! cursor) return;
+    if (! cursor.isFlattenable()) {
+      this.setStatus('nothing to flatten');
+      return;
+    }
+
+    // move keyboard cursor if this was a mouse click
+    if (cursor !== this.cursor) await this.setCursor(cursor);
+
+    const line = cursor.toLine();
+    const target = cursor;
+    // flatten() returns the data needed to put everything back
+    let original = await target.flatten({ reason: 'userAction' });
+    if (! original) {
+      this.setStatus('nothing to flatten');
+      return;
+    }
+    const count = original.length;
+    // make the action undoable (and redoable) via the shared undo/redo stack
+    this.pushUndo({
+      label: `flatten ${line}`,
+      undo: async () => {
+        await target.restoreFlatten(original, { reason: 'userAction' });
+      },
+      redo: async () => {
+        original = await target.flatten({ reason: 'userAction' });
+      },
+    });
+    this.setStatus(`flattened ${count} nodes under ${line}`);
   }
 
   // turn a serialized node dict back into addChild() details:

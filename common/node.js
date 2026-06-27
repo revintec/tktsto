@@ -181,6 +181,92 @@ export class Node {
     return false;
   }
 
+  isFlattenable () {
+    // flatten is offered on any node that has children, at every level of
+    // the tree.  Nodes with grand-children collapse their subtree inward;
+    // nodes whose children are already flat lift those children up to
+    // become siblings of this node (see flatten()).
+    if (this.isRoot()) return false;
+    return this.hasKids();
+  }
+
+  hasGrandKids () {
+    // true if any (non-window) child has children of its own, i.e. there's
+    // something nested deeper than a single flat level below this node.
+    // (nested windows don't count; their tabs stay inside their own window)
+    for (const kid of this.nodes) {
+      if (kid.isWindow()) continue;
+      if (kid.hasKids()) return true;
+    }
+    return false;
+  }
+
+  async flatten (args) {
+    debug('Node.flatten()');
+    if (! args) { error(`Node.flatten(): no args`); return null; }
+    if (this.isRoot() || (! this.hasKids())) return null;
+
+    if (this.hasGrandKids()) {
+      // children are nested deeper than one level: collapse the whole
+      // subtree into this node, keeping pre-order.  (don't reach into
+      // nested windows; their loaded tabs have to stay in their window)
+      const descendants = this.findNodes(null, (n) => ! n.isWindow());
+      if (descendants.length <= 0) return null;
+      // remember where everything started, so this can be undone later
+      const original = descendants.map((node) => ({
+        nodeId: node.id,
+        parentId: node.parent.id,
+        index: node.indexOf(),
+      }));
+      // move every descendant up to be a direct child of this node,
+      // keeping their original (pre-order) visual order intact
+      let moved = 0;
+      for (let i = 0; i < descendants.length; i++) {
+        if (await descendants[i].moveTo(this, i, args)) moved ++;
+      }
+      debug(`flatten(collapsed ${moved} / ${descendants.length} descendants)`);
+      if (moved <= 0) return null;
+      return original;
+    }
+
+    // children are already a single flat level: lift them up to become
+    // siblings of this node (children of this node's parent)
+    const parent = this.parent;
+    if (! parent) return null;
+    const kids = [...this.nodes];
+    // capture original positions (all still under this node right now)
+    const original = kids.map((node) => ({
+      nodeId: node.id,
+      parentId: this.id,
+      index: node.indexOf(),
+    }));
+    // move each child to just after this node, preserving order
+    // (this node doesn't move, so its index stays put as kids leave)
+    let moved = 0;
+    for (let i = 0; i < kids.length; i++) {
+      if (await kids[i].moveTo(parent, this.indexOf() + 1 + i, args)) moved ++;
+    }
+    debug(`flatten(promoted ${moved} / ${kids.length} kids)`);
+    if (moved <= 0) return null;
+    return original;
+  }
+
+  async restoreFlatten (original, args) {
+    // undo a flatten() by moving each node back to where it started;
+    // 'original' is in pre-order, so parents are restored before their
+    // kids and the tree rebuilds itself level by level
+    debug('Node.restoreFlatten()');
+    if (! original) return false;
+    let moved = 0;
+    for (const rec of original) {
+      const node = this.tree.nodes[rec.nodeId];
+      const parent = this.tree.nodes[rec.parentId];
+      if ((! node) || (! parent)) continue;
+      if (await node.moveTo(parent, rec.index, args)) moved ++;
+    }
+    return (moved > 0);
+  }
+
   indexOf () {
     if (!this.parent) return 0;
     if (!this.parent.nodes) return 0;
