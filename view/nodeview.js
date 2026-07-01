@@ -501,6 +501,31 @@ export class NodeView extends Node {
     else setOrHide($windowId, this.windowId, null, 'Window',
       `${this.windowId}`);
 
+    // index within parent, as seen by tktsto (this node's current position)
+    // (always defined, and 0 is valid, so show it whenever in full mode)
+    let $index = getOrCreate('detail-node-index', 'div');
+    if (mode <= 1) hide($index);
+    else setOrHide($index, true, null, 'Index', `${this.indexOf()}`);
+
+    // tab-creation placement info recorded at onTabCreated, for inspection:
+    // the opener tab, the browser's original tab.index, and the index tktsto
+    // chose for this node when it was first created (all may be 0, so test
+    // for undefined rather than truthiness)
+    let $opener = getOrCreate('detail-opener-tabid', 'div');
+    if (mode <= 1) hide($opener);
+    else setOrHide($opener, (undefined !== this.openerTabId), null,
+      'Opener', `${this.openerTabId}`);
+
+    let $tabIndex = getOrCreate('detail-tab-index', 'div');
+    if (mode <= 1) hide($tabIndex);
+    else setOrHide($tabIndex, (undefined !== this.tabIndex), null,
+      'Tab Index', `${this.tabIndex}`);
+
+    let $destIndex = getOrCreate('detail-dest-index', 'div');
+    if (mode <= 1) hide($destIndex);
+    else setOrHide($destIndex, (undefined !== this.destIndex), null,
+      'Dest Index', `${this.destIndex}`);
+
     // ctime, mtime, atime, ...
     for (const tName of ['ctime', 'mtime', 'atime']) {
       const $tstampDiv = getOrCreate(`detail-${tName}`, 'div');

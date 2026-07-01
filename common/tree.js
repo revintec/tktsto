@@ -80,6 +80,10 @@ export class Tree {
       'discarded',
       'frozen',
       'hidden',
+      // tab-creation placement info (for inspection; stripped from backups)
+      'openerTabId',
+      'tabIndex',
+      'destIndex',
     ];
 
     // TODO: make user-configurable
@@ -222,7 +226,10 @@ export class Tree {
           //if ((null === v) || ('' === v))
           //  delete node[k];
           // remove data which shouldn't persist
-          if (['tabId', 'oldTabId', 'windowId', 'marked'].includes(k))
+          // (openerTabId/tabIndex/destIndex are runtime placement diagnostics,
+          //  meaningless once the session is exported/restored elsewhere)
+          if (['tabId', 'oldTabId', 'windowId', 'marked',
+               'openerTabId', 'tabIndex', 'destIndex'].includes(k))
             delete node[k];
           // remove values which haven't changed from default
           if (defaultNode[k] === node[k])
@@ -535,6 +542,11 @@ export class Tree {
     const unlock = await this.onTabCreatedMutex.lock();
     try {
 
+      // remember the tab's original index as the browser first reported it,
+      // before any tktsto adjustment below (Zen normalization, new-tab moves,
+      // etc.); recorded on the node for inspection in the Details sideview
+      const origTabIndex = tab.index;
+
       // Zen Browser is fucked
       if (isZenBrowser) {
         const oldIndex = tab.index;
@@ -717,7 +729,11 @@ export class Tree {
         frozen: tab.frozen,
         hidden: tab.hidden,  // firefox only?
         incognito: tab.incognito,
-        atime: tab.lastAccessed
+        atime: tab.lastAccessed,
+        // placement info for inspection (shown in the Details sideview)
+        openerTabId: tab.openerTabId,
+        tabIndex: origTabIndex,
+        destIndex: destIndex
         }, { reason: 'onTabCreated' });
     }
     finally { unlock(); }

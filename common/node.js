@@ -29,6 +29,15 @@ export class Node {
     this.discarded = undefined;
     this.frozen = undefined;
     this.hidden = undefined;
+    // tab-creation placement info, recorded at onTabCreated for inspection
+    // (see NodeView.$renderDetails); these are a snapshot of how the tab was
+    //  placed when first created, not kept in sync as the node later moves
+    // openerTabId: browser tab.openerTabId of the tab that spawned this one
+    // tabIndex: browser tab.index this tab arrived with (before tktsto adjusts it)
+    // destIndex: index tktsto chose for this node within its parent at creation
+    this.openerTabId = undefined;
+    this.tabIndex = undefined;
+    this.destIndex = undefined;
     // attributes
     this.label = undefined;
     this.note = undefined;
