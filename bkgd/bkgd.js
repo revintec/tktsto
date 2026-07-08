@@ -51,7 +51,7 @@ class Bkgd {
 
     this.cfg = new Config();
     this.cfgDefaults = {
-      clientId: null,
+      clientId: 'mac',
       localBackupInterval: 0,
       localBackupLastTimeCompleted: 0,
     };

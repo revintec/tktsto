@@ -20,10 +20,10 @@ class OptionsPage extends ThemedPage {
     );
     this.$doc = document;
     this.cfgDefaults = {
-      clientId: null,
+      clientId: 'mac',
       // backups
       humanFriendlyBackups: false,
-      localBackupInterval: null,
+      localBackupInterval: 0,
       // theme
       theme: 'TK Night',
       expandedRowPrefix: false,
@@ -49,10 +49,10 @@ class OptionsPage extends ThemedPage {
       cursorFollowsActiveTab: true,
       activeTabExpandsItsParents: true,
       pinnedTabsOpenNewTabsPinnedToo: false,
-      naturalTabOrdering: false,
+      naturalTabOrdering: true,
       convertFromWindowWhenDroppedIntoWindow: true,
       hideTopButtonsDuringSearch: false,
-      hideZoomButtons: false,
+      hideZoomButtons: true,
       hideCollapsedTabs: false,
       loadExpandedBranchStyle: 'ask',
       loadCollapsedBranchStyle: 'ask',

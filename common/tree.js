@@ -41,14 +41,14 @@ export class Tree {
 
     this.cfg = new Config();
     this.cfgDefaults = {
-      clientId: null,
+      clientId: 'mac',
       humanFriendlyBackups: false,
       localBackupLastTimeCompleted: 0,
       hideCollapsedTabs: false,
       hideCollapsedTabGroups: true,
       pinnedTabsOpenNewTabsPinnedToo: false,
       convertFromWindowWhenDroppedIntoWindow: true,
-      naturalTabOrdering: false,
+      naturalTabOrdering: true,
     };
 
     // "natural tab ordering": how long the user can look at another tab
