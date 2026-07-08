@@ -238,6 +238,22 @@
 
   <div>
     <label>
+    <input type="checkbox" id="naturalTabOrdering"
+                           name="naturalTabOrdering">
+    Natural tab ordering?
+    </label>
+    <small>
+    New tabs open just before the
+    <span class="row active loaded"><b class="url-title">current tab</b></span>,
+    and tabs opened <i>from</i> the current tab line up after it in the
+    order they were opened.  After looking at another tab for more than
+    4 seconds, the next tab opened from the current tab starts a new
+    batch at the front of the current tab's group.
+    </small>
+  </div>
+
+  <div>
+    <label>
     <input type="checkbox" id="convertFromWindowWhenDroppedIntoWindow"
                            name="convertFromWindowWhenDroppedIntoWindow">
     Convert
