@@ -655,9 +655,16 @@ export class Tree {
         }
       }
 
-      // natural ordering: tabs opened from another tab line up after the
-      // last tab in the opener's current batch, in the order opened
-      if (openerNode) {
+      // natural ordering only batches tabs opened in the background
+      // (C-click etc); a tab opened in the foreground takes the user
+      // with it, so it opens right next to the current tab instead
+      // (via the standard openerTabId placement below)
+      const naturalBatch = (!! openerNode) && (! tab.active);
+
+      // natural ordering: tabs opened in the background from another tab
+      // line up after the last tab in the opener's current batch,
+      // in the order opened
+      if (naturalBatch) {
         const place = this.naturalOpenedTabPlacement(openerNode, winNode);
         destParent = place.destParent;
         destIndex = place.destIndex;
@@ -673,7 +680,7 @@ export class Tree {
       }
       // natural ordering: tabs not opened from another tab (C-t, opened
       // from outside the browser, ...) go just before the current tab
-      else if (natural && activeTabNode
+      else if (natural && activeTabNode && (! openerNode)
         && (isNewTabPage(tabPendingUrl)
           || (tab.index >= loadedTabNodes.length))
       ) {
@@ -762,7 +769,7 @@ export class Tree {
         atime: tab.lastAccessed
         }, { reason: 'onTabCreated' });
       // natural ordering: the opener's batch continues from the new tab
-      if (openerNode && newNode) openerNode.naturalLastOpened = newNode;
+      if (naturalBatch && newNode) openerNode.naturalLastOpened = newNode;
     }
     finally { unlock(); }
   }
@@ -864,11 +871,11 @@ export class Tree {
     await windowNode.setActiveTab({ reason: 'onTabActivated' });
   }
 
-  // "natural tab ordering": tabs opened from another tab are placed
-  // right after the last tab in the opener's current batch, or at the
-  // front of the opener's group when starting a new batch.
-  // A batch ends once the user looks away from the opener for longer
-  // than naturalAwayTimeout (see naturalTabSwitched).
+  // "natural tab ordering": tabs opened in the background from another
+  // tab are placed right after the last tab in the opener's current
+  // batch, or at the front of the opener's group when starting a new
+  // batch.  A batch ends once the user looks away from the opener for
+  // longer than naturalAwayTimeout (see naturalTabSwitched).
   naturalOpenedTabPlacement (openerNode, winNode) {
     const now = Date.now();
     // when tabs get opened while the user is looking elsewhere,
