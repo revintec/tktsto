@@ -49,6 +49,7 @@ class OptionsPage extends ThemedPage {
       cursorFollowsActiveTab: true,
       activeTabExpandsItsParents: true,
       pinnedTabsOpenNewTabsPinnedToo: false,
+      naturalTabOrdering: false,
       convertFromWindowWhenDroppedIntoWindow: true,
       hideTopButtonsDuringSearch: false,
       hideZoomButtons: false,
@@ -170,6 +171,10 @@ class OptionsPage extends ThemedPage {
       }),
       new Option(this, {
         cfgKey: 'pinnedTabsOpenNewTabsPinnedToo',
+        inputType: 'checkbox',
+      }),
+      new Option(this, {
+        cfgKey: 'naturalTabOrdering',
         inputType: 'checkbox',
       }),
       new Option(this, {

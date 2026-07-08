@@ -460,6 +460,9 @@ class Bkgd {
     debug(`bkgd.onWindowFocusChanged(${windowId})`);
     await this.treeLoaded;
     const winNode = this.tree.root.getWindowId(windowId);
+    // "natural tab ordering" tracks when the user switches away from
+    // the current tab, including by switching windows
+    this.tree.naturalWindowFocusChanged(winNode);
     // no node = no problem, because a non-browser window may be focused
     if (! winNode) return;
 

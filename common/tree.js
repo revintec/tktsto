@@ -48,7 +48,12 @@ export class Tree {
       hideCollapsedTabGroups: true,
       pinnedTabsOpenNewTabsPinnedToo: false,
       convertFromWindowWhenDroppedIntoWindow: true,
+      naturalTabOrdering: false,
     };
+
+    // "natural tab ordering": how long the user can look at another tab
+    // before the current tab's batch of opened tabs ends (milliseconds)
+    this.naturalAwayTimeout = 4000;
 
     this.createRootNode();
 
@@ -631,13 +636,50 @@ export class Tree {
         tab.index = activeTab.index + 1;
       }
 
+      // "natural tab ordering" groups tabs by which tab opened them,
+      // so figure out which node (if any) opened this tab
+      const natural = (!! this.bkgd) && this.cfg.naturalTabOrdering;
+      let openerNode = null;
+      if (natural && (! isNewTabPage(tabPendingUrl))) {
+        if (tab.openerTabId && (tab.openerTabId !== tab.id)) {
+          openerNode = this.getNodeByTabId(tab.openerTabId, winNode);
+          // opener tab isn't in the tree, so credit the active tab
+          if (! openerNode) openerNode = activeTabNode;
+        }
+        // Maxthon sets tab.index *instead of* tab.openerTabId
+        // (other browsers use tab.index like this for tabs which were
+        //  NOT opened from a page, so only do this on Maxthon)
+        else if (isMaxthon
+          && activeTab && ((activeTab.index + 1) === tab.index)) {
+          openerNode = activeTabNode;
+        }
+      }
+
+      // natural ordering: tabs opened from another tab line up after the
+      // last tab in the opener's current batch, in the order opened
+      if (openerNode) {
+        const place = this.naturalOpenedTabPlacement(openerNode, winNode);
+        destParent = place.destParent;
+        destIndex = place.destIndex;
+        debug(`Tree.onTabCreated(natural) new tab goes to "${destParent.toLine()}" [${destIndex}]`);
+      }
       // if the active tab is pinned, open just after the "Pinned" area
-      if (activeTabNode?.isPinned()
+      else if (activeTabNode?.isPinned()
         && (! this.cfg.pinnedTabsOpenNewTabsPinnedToo)
       ) {
         debug(`Tree.onTabCreated(active = pinned): moving new tab outside Pinned area`);
         destParent = winNode;
         destIndex = 1;
+      }
+      // natural ordering: tabs not opened from another tab (C-t, opened
+      // from outside the browser, ...) go just before the current tab
+      else if (natural && activeTabNode
+        && (isNewTabPage(tabPendingUrl)
+          || (tab.index >= loadedTabNodes.length))
+      ) {
+        destParent = activeTabNode.parent;
+        destIndex = activeTabNode.indexOf();
+        debug(`Tree.onTabCreated(natural) moving new tab to just before: "${activeTabNode.toLine()}"`);
       }
       // if the tab is a blank created by the user with C-t...
       // ... make it the 1st child of the active tab
@@ -706,7 +748,7 @@ export class Tree {
         debug('Tree.onTabCreated(default) not moving new tab');
       }
       // create the tree node
-      await destParent.addChild(destIndex, {
+      const newNode = await destParent.addChild(destIndex, {
         windowId: tab.windowId,
         tabId: tab.id,
         title: tab.title,
@@ -719,6 +761,8 @@ export class Tree {
         incognito: tab.incognito,
         atime: tab.lastAccessed
         }, { reason: 'onTabCreated' });
+      // natural ordering: the opener's batch continues from the new tab
+      if (openerNode && newNode) openerNode.naturalLastOpened = newNode;
     }
     finally { unlock(); }
   }
@@ -814,7 +858,87 @@ export class Tree {
       // probably not an error
       return log(`Tree.onTabActivated() can't find windowId="${windowId}"`);
     }
+    // natural tab ordering: track when the user leaves / returns to tabs
+    if (this.bkgd && this.cfg.naturalTabOrdering)
+      this.naturalTabSwitched(windowNode, this.getNodeByTabId(tabId));
     await windowNode.setActiveTab({ reason: 'onTabActivated' });
+  }
+
+  // "natural tab ordering": tabs opened from another tab are placed
+  // right after the last tab in the opener's current batch, or at the
+  // front of the opener's group when starting a new batch.
+  // A batch ends once the user looks away from the opener for longer
+  // than naturalAwayTimeout (see naturalTabSwitched).
+  naturalOpenedTabPlacement (openerNode, winNode) {
+    const now = Date.now();
+    // when tabs get opened while the user is looking elsewhere,
+    // expire old batches here (instead of waiting for a tab switch),
+    // but keep further background tabs batched with this one
+    if (undefined !== openerNode.naturalAwaySince) {
+      if ((now - openerNode.naturalAwaySince) > this.naturalAwayTimeout)
+        delete openerNode.naturalLastOpened;
+      openerNode.naturalAwaySince = now;
+    }
+    // continue the current batch: insert right after the last opened tab
+    const last = openerNode.naturalLastOpened;
+    if (last
+      && (this.nodes[last.id] === last)  // still in the tree
+      && last.isLoaded() && (! last.isWindow())
+      && last.isChildOf(openerNode)  // still in the opener's group
+    ) {
+      return { destParent: last.parent, destIndex: last.indexOf() + 1 };
+    }
+    // start a new batch at the front of the opener's group...
+    // but pinned tabs open new tabs just after the "Pinned" area instead
+    if (openerNode.isPinned()
+      && (! this.cfg.pinnedTabsOpenNewTabsPinnedToo)
+    ) {
+      return { destParent: winNode, destIndex: 1 };
+    }
+    return { destParent: openerNode, destIndex: 0 };
+  }
+
+  // "natural tab ordering": remember when the user switches away from
+  // each tab, so a tab's batch can end after the user loses interest
+  naturalTabSwitched (windowNode, newTabNode) {
+    const now = Date.now();
+    // switching away from a tab starts its "away" timer
+    // (keep the oldest time if it was already away)
+    const activeNodes = windowNode.findNodes(
+      (n) => (n.isActive() && n.isLoaded()),
+      (n) => (! n.isWindow())
+    );
+    for (const node of activeNodes) {
+      if ((node !== newTabNode)
+        && (undefined === node.naturalAwaySince)
+      ) node.naturalAwaySince = now;
+    }
+    // coming back to a tab within the timeout keeps its batch going;
+    // coming back later ends the batch
+    if (newTabNode && (undefined !== newTabNode.naturalAwaySince)) {
+      if ((now - newTabNode.naturalAwaySince) > this.naturalAwayTimeout)
+        delete newTabNode.naturalLastOpened;
+      delete newTabNode.naturalAwaySince;
+    }
+  }
+
+  // "natural tab ordering": switching windows also means switching away
+  // from (or back to) the current tab in each window
+  naturalWindowFocusChanged (focusedWinNode) {
+    if (! this.bkgd) return;
+    if (! this.cfg.naturalTabOrdering) return;
+    const winNodes = this.root.findNodes(
+      (n) => (n.isWindow() && n.isLoaded()));
+    for (const winNode of winNodes) {
+      const activeTabNode = winNode.getActiveTab();
+      if (! activeTabNode) continue;
+      // focusing a window is like switching back to its active tab...
+      if (winNode === focusedWinNode)
+        this.naturalTabSwitched(winNode, activeTabNode);
+      // ... and unfocused windows have their active tab "away"
+      else if (undefined === activeTabNode.naturalAwaySince)
+        activeTabNode.naturalAwaySince = Date.now();
+    }
   }
 
   async onTabMoved (tabId, moveInfo) {
