@@ -20,10 +20,10 @@ class OptionsPage extends ThemedPage {
     );
     this.$doc = document;
     this.cfgDefaults = {
-      clientId: 'mac',
+      clientId: null,
       // backups
       humanFriendlyBackups: false,
-      localBackupInterval: 0,
+      localBackupInterval: null,
       // theme
       theme: 'TK Night',
       expandedRowPrefix: false,

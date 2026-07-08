@@ -41,7 +41,7 @@ export class Tree {
 
     this.cfg = new Config();
     this.cfgDefaults = {
-      clientId: 'mac',
+      clientId: null,
       humanFriendlyBackups: false,
       localBackupLastTimeCompleted: 0,
       hideCollapsedTabs: false,
