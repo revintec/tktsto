@@ -80,6 +80,7 @@ class Bkgd {
     this.initWindowListeners();
     this.initTabListeners();
     this.initMiscListeners();
+    this.initKeepAlive();
 
     // tell the browser the sidepanel can be opened via hotkey or icon click
     sidepanel.init();
@@ -137,6 +138,23 @@ class Bkgd {
     // automatic scheduled backups
     this.initLocalBackupAlarm();
     api.alarms.onAlarm.addListener( this.onAlarm.bind(this) );
+  }
+
+  initKeepAlive () {
+    // Chrome kills the extension's service worker after ~30 seconds of
+    // inactivity, then restarts it on the next event... which is slow,
+    // because it has to reload the entire tree from storage every time,
+    // and events can get lost or mis-handled while it reloads.
+    // TreeViews ping every 15s to keep it awake, but only while a view is
+    // open... so when all views are closed, keep the worker alive from
+    // here instead.  Any extension API call resets Chrome's 30s idle timer
+    // (Chrome 110+), and getPlatformInfo() is one of the cheapest calls
+    // available (no disk I/O, no side effects).
+    // https://developer.chrome.com/docs/extensions/how-to/web-platform/persist-sw
+    // Firefox uses an event page instead of a service worker, and DOM
+    // timers don't count as activity there, so this trick is Chrome-only.
+    if (! isChrome) return;
+    setInterval(() => api.runtime.getPlatformInfo(), 20 * 1000);
   }
 
   initWindowListeners () {
