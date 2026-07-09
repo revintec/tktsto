@@ -1504,7 +1504,17 @@ export class Tree {
   // Further tie-breaking prefers the window with the most metadata,
   // so a window with a label beats one without... and further ties are
   // broken by which window occurs first in the session tree.
-  findMatchingWindow (window) {
+  //
+  // claimedWinNodes / claimedTabNodes: nodes already attached to another
+  // browser window earlier in the same merge pass.  Each node can only be
+  // attached to one browser window / tab, so these are off-limits here.
+  // Without this, a small window (like a popup) whose URL also exists in
+  // a bigger window's subtree would match the bigger window node, steal
+  // one of its tab nodes, and *demote every other tab node in it* --
+  // wiping the tabIds assigned earlier in this merge, which then caused
+  // mergeOpenWindowsIntoTree() to re-create every tab of the bigger
+  // window as a duplicate node... on every service worker restart.
+  findMatchingWindow (window, claimedWinNodes = null, claimedTabNodes = null) {
     // find the "needle" (realTabList) in the "haystack"
     const result = {};  // data to return
     result.loadedTabNodesWithNoTab = [];
@@ -1520,6 +1530,8 @@ export class Tree {
       (node) => { return node.isWindow(); }
     );
     for (const winNode of winNodeList) {
+      // skip window nodes already attached to another browser window
+      if (claimedWinNodes && claimedWinNodes.has(winNode)) continue;
       const tabList = winNode.getLoadedAndUnloadedTabs();
       haystack.push({ winNode, tabList });
     }
@@ -1550,6 +1562,9 @@ export class Tree {
       )) { if (! tabNodeList.includes(tabNode)) tabNodeList.push(tabNode); }
       // now attach browser tab IDs to nodes
       for (const tabNode of tabNodeList) {
+        // don't steal (or demote) nodes already attached to another
+        // browser window's tabs earlier in this merge pass
+        if (claimedTabNodes && claimedTabNodes.has(tabNode)) continue;
         let found = false;
         for (const realTab of realTabList) {
           // skip tabs we've already assigned to a node
@@ -1562,6 +1577,7 @@ export class Tree {
             tabNode.tabId = realTab.id;
             tabNode.loaded = true;
             tabNode.wasLoaded = false;
+            if (claimedTabNodes) claimedTabNodes.add(tabNode);
             break;  // stop searching realTabList for this tabNode
           }
         }

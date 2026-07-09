@@ -290,6 +290,17 @@ class Bkgd {
     console.time('mergeOpenWindowsIntoTree');
     // attach browser windows to window nodes
     let attachedWindows = [];
+    // each tree node can attach to only ONE browser window / tab,
+    // so track what's already claimed during this merge
+    // (otherwise two overlapping browser windows can fight over one
+    //  window node, and the loser re-creates all its tabs as duplicates)
+    const claimedWinNodes = new Set();
+    const claimedTabNodes = new Set();
+    // match windows with the most tabs first, so a small window (like
+    // a popup) can't claim a big window's node before the big window
+    // gets a chance to match it
+    windows = [...windows].sort(
+      (a, b) => (b.tabs?.length || 0) - (a.tabs?.length || 0));
     const extUrl = api.runtime.getURL(`/`);
     let delay = 500;  // wait a bit to reopen extension pages
     const delayPerTab = 50;
@@ -299,7 +310,8 @@ class Bkgd {
       // match by windowId (old, unreliable, windowId changes or goes stale)
       //let winNode = this.tree.root.getWindowId(window.id);
       // search for a Window in the tree with matching tabs
-      const match = this.tree.findMatchingWindow(window);
+      const match = this.tree.findMatchingWindow(window,
+        claimedWinNodes, claimedTabNodes);
       let winNode = match.winNode;
       if (winNode) {
         //debug('winNode before loading:', winNode.asTextBranch());
@@ -329,6 +341,7 @@ class Bkgd {
           { reason: 'mergeOpenWindowsIntoTree' });
       }
       // mark this winNode as actually attached to a real window
+      claimedWinNodes.add(winNode);
       attachedWindows.push({ winNode, window });
     }
 

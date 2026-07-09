@@ -5,6 +5,21 @@ What changed, and when?  You know the drill.
 
 ## Unreleased
 
+Bug fixes:
+
+- Fixed **runaway tab duplication** ("tab listing growing out of control").
+  When two open browser windows both matched the same window node in the
+  tree -- for example a single-tab popup (video call, mini player, web app
+  dialog) whose URL also existed inside a big window's subtree -- each
+  session merge let the second window steal the first window's tab nodes
+  and demote the rest, wiping the tab IDs assigned moments earlier.  The
+  merge then re-created every tab of the first window as a duplicate node.
+  Since the merge runs on every service worker restart (roughly once per
+  minute while the browser is idle), this could add thousands of duplicate
+  nodes overnight.  Now each window node and tab node can only be claimed
+  by one browser window per merge pass, and windows with more tabs get
+  matched first so a popup can't claim a big window's node.
+
 Changes:
 
 - New option (Tree View behavior): hide the zoom `-` / `+` buttons at the top
