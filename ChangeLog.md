@@ -20,6 +20,13 @@ Bug fixes:
   by one browser window per merge pass, and windows with more tabs get
   matched first so a popup can't claim a big window's node.
 
+- Persist the `loaded` -> `wasLoaded` demotions the session merge makes
+  when several nodes share one URL.  These were memory-only, so copies
+  that lost the merge race kept a stale `loaded` flag in the database --
+  and since the merge prefers `loaded` nodes over `wasLoaded` ones, the
+  stale copies could outrank (and steal open tabs from) the original
+  nodes after the next browser restart.
+
 Changes:
 
 - New option (Tree View behavior): hide the zoom `-` / `+` buttons at the top

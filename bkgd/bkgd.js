@@ -313,6 +313,13 @@ class Bkgd {
       const match = this.tree.findMatchingWindow(window,
         claimedWinNodes, claimedTabNodes);
       let winNode = match.winNode;
+      // persist the loaded -> wasLoaded demotions findMatchingWindow just
+      // did in memory, so stale 'loaded' copies in the DB can't outrank
+      // the real nodes (loaded beats wasLoaded) at the next startup
+      if (match.loadedTabNodesWithNoTab?.length) {
+        for (const node of match.loadedTabNodesWithNoTab)
+          await this.tree.db.saveNode(node);
+      }
       if (winNode) {
         //debug('winNode before loading:', winNode.asTextBranch());
         winNode.load({ reason: 'mergeOpenWindowsIntoTree' });
