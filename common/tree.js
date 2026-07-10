@@ -661,6 +661,12 @@ export class Tree {
       // (via the standard openerTabId placement below)
       const naturalBatch = (!! openerNode) && (! tab.active);
 
+      // natural ordering: tabs opened from outside the browser group up;
+      // naturalExternalRoot is the existing group this tab joins
+      // (null when it starts a group of its own, see below)
+      let naturalExternal = false;
+      let naturalExternalRoot = null;
+
       // natural ordering: tabs opened in the background from another tab
       // line up after the last tab in the opener's current batch,
       // in the order opened
@@ -684,9 +690,24 @@ export class Tree {
         && (isNewTabPage(tabPendingUrl)
           || (tab.index >= loadedTabNodes.length))
       ) {
-        destParent = activeTabNode.parent;
-        destIndex = activeTabNode.indexOf();
-        debug(`Tree.onTabCreated(natural) moving new tab to just before: "${activeTabNode.toLine()}"`);
+        // tabs opened from outside the browser (real URL, unlike C-t)
+        // form a group: while the current tab is one of them, further
+        // outside tabs join as the group root's last child, so D, E, F
+        // opened in a row while on tab A become "D(E, F), A" instead
+        // of stacking up in reverse as "F, E, D, A"
+        naturalExternal = (! isNewTabPage(tabPendingUrl));
+        if (naturalExternal)
+          naturalExternalRoot = this.naturalExternalRootOf(activeTabNode);
+        if (naturalExternalRoot) {
+          destParent = naturalExternalRoot;
+          destIndex = naturalExternalRoot.nodes.length;
+          debug(`Tree.onTabCreated(natural) new outside tab joins group: "${destParent.toLine()}"`);
+        }
+        else {
+          destParent = activeTabNode.parent;
+          destIndex = activeTabNode.indexOf();
+          debug(`Tree.onTabCreated(natural) moving new tab to just before: "${activeTabNode.toLine()}"`);
+        }
       }
       // if the tab is a blank created by the user with C-t...
       // ... make it the 1st child of the active tab
@@ -770,6 +791,11 @@ export class Tree {
         }, { reason: 'onTabCreated' });
       // natural ordering: the opener's batch continues from the new tab
       if (naturalBatch && newNode) openerNode.naturalLastOpened = newNode;
+      // natural ordering: remember each outside tab's group root
+      // (itself, when starting a new group), so the next outside tab
+      // can find and join the group
+      if (naturalExternal && newNode)
+        newNode.naturalExternalRoot = (naturalExternalRoot || newNode);
     }
     finally { unlock(); }
   }
@@ -903,6 +929,22 @@ export class Tree {
       return { destParent: winNode, destIndex: 1 };
     }
     return { destParent: openerNode, destIndex: 0 };
+  }
+
+  // "natural tab ordering": tabs opened from outside the browser
+  // (no openerTabId, and a real URL unlike C-t) group up: the first
+  // one starts a group, and ones opened while the user is still on a
+  // tab inside the group become the group root's last child.
+  // Returns the root of the group tabNode belongs to, or null when
+  // it isn't in one (anymore).
+  naturalExternalRootOf (tabNode) {
+    const root = tabNode?.naturalExternalRoot;
+    if (! root) return null;
+    if (this.nodes[root.id] !== root) return null;  // gone from the tree
+    if ((! root.isLoaded()) || root.isWindow()) return null;
+    // the current tab must not have wandered off from its group
+    if (! tabNode.isChildOf(root, true)) return null;
+    return root;
   }
 
   // "natural tab ordering": remember when the user switches away from

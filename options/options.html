@@ -251,6 +251,10 @@
     background tab opened from the current tab starts a new batch at
     the front of the current tab's group.  Tabs opened in the
     foreground open right next to the current tab as usual.
+    Tabs opened from outside the browser group up too: while the
+    current tab is one of them, the next outside tab becomes the last
+    child of the group instead of stacking up in front, so a quick
+    series of outside tabs stays in the order it was opened.
     </small>
   </div>
 
