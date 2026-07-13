@@ -58,6 +58,12 @@ export class TreeView extends Tree {
     // undo/redo stacks of { label, undo: async fn, redo: async fn } entries
     this.undoStack = [];
     this.redoStack = [];
+
+    // "duplicate view" toggle state (see action_toggleDupView);
+    // purely visual, never saved, always starts turned off
+    this.dupViewActive = false;
+    this.dupExpandOverrides = [];
+    this.dupViewPrevScope = null;
   }
 
   destroy () {
@@ -90,6 +96,8 @@ export class TreeView extends Tree {
     // optional toggle shown in place of the zoom buttons; flips the
     // "flatten lone child" display (a node's only child shown as a sibling)
     this.$flattenLoneChildBtn = doc.getElementById('flatten-lone-child-btn');
+    // toggle for the "duplicate view" (show only duplicated nodes)
+    this.$dupBtn = doc.getElementById('dup-btn');
 
     this.$searchBar = doc.getElementById('search-bar');
     this.$searchEntry = doc.getElementById('search-entry');
@@ -259,6 +267,10 @@ export class TreeView extends Tree {
 
     // load the tree
     await super.loadTreeFromBkgd();
+
+    // a reload replaces every Node object, which drops the view-only
+    // duplicate-view marks; recompute them so the filter stays correct
+    if (this.dupViewActive) this.markDupNodes();
 
     // render ... everything
     if (render) this.$renderWholeTree();
@@ -2694,6 +2706,12 @@ export class TreeView extends Tree {
         this.onFlattenLoneChildBtnClick();
       });
     }
+    // duplicate view toggle (show only duplicated nodes, session-wide)
+    if (this.$dupBtn) {
+      this.$dupBtn.addEventListener('click', () => {
+        this.onDupBtnClick();
+      });
+    }
     // when details-btn clicked, toggle the details box
     this.$detailsBtn.addEventListener('click', () => {
       this.onDetailsBtnClick();
@@ -2866,6 +2884,12 @@ export class TreeView extends Tree {
   }
 
   onViewScopeBtnClick () {
+    // the duplicate view borrows session scope; don't let this button
+    // overwrite the saved scope while it's active
+    if (this.dupViewActive) {
+      this.setStatus('turn off Dup view to change the view scope');
+      return;
+    }
     if ('session' === this.viewScope) this.viewScope = 'window';
     else this.viewScope = 'session';
     // save button state to config storage, per window
@@ -3050,6 +3074,126 @@ export class TreeView extends Tree {
     this.cfg.set('flattenLoneChild', newVal);
     this.$renderFlattenLoneChildBtn();
     this.setStatus(`Flatten lone child: ${newVal ? 'on' : 'off'}`);
+  }
+
+  // ---- duplicate view ----------------------------------------------------
+  // a visual filter that shows only nodes whose URL appears more than once
+  // anywhere in the session, each in its original window / order / position,
+  // plus their ancestors for context (see "dup-view" rules in themes/tk.css).
+  // it never changes the underlying tree data: hiding is done with CSS
+  // classes, and buried duplicates are revealed with the same view-only
+  // expansion overrides the search feature uses.
+
+  onDupBtnClick () { return this.action_toggleDupView({ type: 'click' }); }
+
+  async action_toggleDupView (event) {
+    if (this.dupViewActive) await this.disableDupView();
+    else await this.enableDupView();
+  }
+
+  // flag duplicated nodes (dupMatch) and their ancestors (dupPath);
+  // NodeView.$render() mirrors the flags onto the elements as CSS classes.
+  // returns the list of duplicated nodes.
+  markDupNodes () {
+    this.clearDupMarks();
+    // group every tab-like node in the whole session by its URL
+    const byUrl = new Map();
+    for (const node of this.root.findNodes((n) => (n.url && (! n.isWindow())))) {
+      let group = byUrl.get(node.url);
+      if (! group) byUrl.set(node.url, group = []);
+      group.push(node);
+    }
+    const dups = [];
+    for (const group of byUrl.values()) {
+      if (group.length < 2) continue;
+      for (const node of group) {
+        node.dupMatch = true;
+        dups.push(node);
+        // keep every ancestor visible, so each duplicate is shown within
+        // its original structure
+        let parent = node.parent;
+        while (parent && (! parent.dupPath)) {
+          parent.dupPath = true;
+          parent = parent.parent;
+        }
+      }
+    }
+    return dups;
+  }
+
+  clearDupMarks () {
+    this.root.dupMatch = false;
+    this.root.dupPath = false;
+    this.root.forEachRecursive((n) => {
+      n.dupMatch = false;
+      n.dupPath = false;
+    });
+  }
+
+  async enableDupView () {
+    const dups = this.markDupNodes();
+    if (dups.length <= 0) {
+      this.setStatus('no duplicate nodes found');
+      return;
+    }
+
+    this.dupViewActive = true;
+
+    // duplicates are gathered across the whole session, so show the whole
+    // session; keep this in memory only (don't save it like the Session /
+    // Window button does), so the user's real choice survives the toggle
+    this.dupViewPrevScope = this.viewScope;
+    this.viewScope = 'session';
+    this.$renderViewScopeBtn();
+    if (this.$viewScopeBtn) this.$viewScopeBtn.classList.add('greyed-out');
+
+    // hide everything that isn't a duplicate or an ancestor of one
+    this.$body.classList.add('dup-view');
+    this.$renderWholeTree();
+
+    // reveal duplicates buried inside collapsed branches
+    this.dupExpandOverrides = [];
+    for (const node of dups) {
+      if (this.expandOverrides[node.id]) continue;  // already overridden
+      if (node.isVisible(this.viewRoot)) continue;  // already visible
+      await this.expandOverride(node, true);
+      this.dupExpandOverrides.push(node);
+    }
+
+    this.$renderDupBtn();
+    await this.ensureCursorVisible();
+    this.setStatus(`Dup view: showing ${dups.length} duplicated nodes`);
+  }
+
+  async disableDupView () {
+    this.dupViewActive = false;
+
+    // drop the view-only expansion overrides added by enableDupView(),
+    // leaving any others (like the active tab's) alone
+    for (const node of this.dupExpandOverrides) {
+      await this.expandOverride(node, null);
+    }
+    this.dupExpandOverrides = [];
+
+    this.clearDupMarks();
+    this.$body.classList.remove('dup-view');
+
+    // restore the view scope from before the dup view was opened
+    if (this.dupViewPrevScope) this.viewScope = this.dupViewPrevScope;
+    this.dupViewPrevScope = null;
+    this.$renderViewScopeBtn();
+    if (this.$viewScopeBtn) this.$viewScopeBtn.classList.remove('greyed-out');
+
+    this.$renderWholeTree();
+    this.$renderDupBtn();
+    await this.ensureCursorVisible();
+    this.setStatus('Dup view: off');
+  }
+
+  // reflect the dup view state on the toggle button (pressed = on)
+  $renderDupBtn () {
+    if (! this.$dupBtn) return;
+    this.$dupBtn.classList.toggle('pressed', !! this.dupViewActive);
   }
 
   onBackupBtnClick () {

@@ -76,6 +76,12 @@ export class NodeView extends Node {
       this.$row.classList.remove('marked');
     }
 
+    // duplicate view marks (visual only, see TreeView.action_toggleDupView):
+    // dup-node = this node's URL appears more than once in the session,
+    // dup-path = an ancestor shown so its duplicates keep their structure
+    this.$.classList.toggle('dup-node', !! this.dupMatch);
+    this.$.classList.toggle('dup-path', !! this.dupPath);
+
     // are we a window?
     if (this.isWindow()) {
       this.$.classList.add('window');

@@ -360,6 +360,21 @@ body.flatten-lone-child .nodes:not(.root-nodes):has(> .node:only-child) {
   border-left: 0;
 }
 
+/* duplicate view:
+ * gated on body.dup-view, toggled by the top-bar "Dup" button.
+ * shows only nodes whose URL appears more than once in the session
+ * (.dup-node), plus their ancestors (.dup-path) so each duplicate keeps
+ * its original window / order / structure.  purely visual -- the tree
+ * data itself is untouched (see TreeView.action_toggleDupView). */
+body.dup-view #tree-view .node:not(.dup-node):not(.dup-path) {
+  display: none;
+}
+/* make the duplicates themselves stand out from their context rows */
+body.dup-view .dup-node > .row {
+  outline: var(--dup-row-outline);
+  border-radius: var(--cursor-radius-collapsed);
+}
+
 /* outer structure...
  * #tree-root.nodes.root-nodes
  *   #noderoot.node.root-nodes
@@ -1330,6 +1345,8 @@ select {
   --window-branch-radius: 0.5rem;
   /***** marked nodes *****/
   --marked-node-shadow: 0 0 10px gold;
+  /***** duplicate view *****/
+  --dup-row-outline: var(--1px) dashed var(--tree-line-cursor);
   /***** hover menu *****/
   --delete-button-fg: #f00;
   /* --marked-row-outline: var(--1px) solid gold; */

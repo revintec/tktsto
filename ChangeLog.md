@@ -29,6 +29,14 @@ Bug fixes:
 
 Changes:
 
+- New `Dup` toggle button in the sidebar's top bar: when on, the tree shows
+  only nodes whose URL appears more than once anywhere in the session, each
+  in its original window / order / position (with ancestors shown for
+  context, and collapsed branches opened just for the view), to make it easy
+  to spot duplicates and deduplicate or move them around.  It's purely
+  visual: nothing about the underlying tree data changes, and turning it off
+  puts the view back exactly the way it was.
+
 - New option (Tree View behavior): hide the zoom `-` / `+` buttons at the top
   of the sidebar and replace them with a `Flat` toggle that turns the
   "flatten lone child" display on and off.  When on, a node with exactly one
