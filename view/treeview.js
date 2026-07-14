@@ -3091,30 +3091,87 @@ export class TreeView extends Tree {
     else await this.enableDupView();
   }
 
+  // duplicate comparison: URLs match when they share a domain and path,
+  // ignoring the #fragment entirely.  query strings only tell duplicates
+  // apart when they disagree on a key that every candidate has:
+  // keys missing from any candidate are ignored, and keys present in all
+  // of them must have equal values.
+
+  // split a URL at its query string: everything before the first '?' or
+  // '#' identifies the page (domain and path); the query string is parsed
+  // for comparison and the #fragment is dropped entirely
+  dupUrlParse (url) {
+    const frag = url.indexOf('#');
+    if (frag >= 0) url = url.slice(0, frag);
+    const q = url.indexOf('?');
+    if (q < 0) return { base: url, params: new URLSearchParams() };
+    return { base: url.slice(0, q),
+      params: new URLSearchParams(url.slice(q + 1)) };
+  }
+
+  // split a group of { node, params } entries (which all share one domain
+  // and path) into clusters of duplicates: query keys missing from part of
+  // the group are ignored, but keys that every member has must match.
+  // splitting can expose keys shared by everyone left in a sub-group, so
+  // recurse until nothing splits
+  dupQueryClusters (members) {
+    // find the query keys present in every member
+    let commonKeys = null;
+    for (const member of members) {
+      const keys = new Set(member.params.keys());
+      if (null === commonKeys) commonKeys = keys;
+      else commonKeys = new Set([...commonKeys].filter((k) => keys.has(k)));
+    }
+    // partition the members by their values for those keys
+    const parts = new Map();
+    const sortedKeys = [...commonKeys].sort();
+    for (const member of members) {
+      const valKey = JSON.stringify(
+        sortedKeys.map((k) => member.params.getAll(k)));
+      let part = parts.get(valKey);
+      if (! part) parts.set(valKey, part = []);
+      part.push(member);
+    }
+    // nothing split, so everyone here agrees on every shared key
+    if (1 === parts.size) return [members];
+    // otherwise sub-groups may share keys the whole group didn't; recurse
+    const clusters = [];
+    for (const part of parts.values()) {
+      if (part.length < 2) continue;  // a lone URL has no duplicates
+      clusters.push(...this.dupQueryClusters(part));
+    }
+    return clusters;
+  }
+
   // flag duplicated nodes (dupMatch) and their ancestors (dupPath);
   // NodeView.$render() mirrors the flags onto the elements as CSS classes.
   // returns the list of duplicated nodes.
   markDupNodes () {
     this.clearDupMarks();
-    // group every tab-like node in the whole session by its URL
-    const byUrl = new Map();
+    // group every tab-like node in the whole session by domain and path,
+    // then split each group by query string (see dupQueryClusters)
+    const byBase = new Map();
     for (const node of this.root.findNodes((n) => (n.url && (! n.isWindow())))) {
-      let group = byUrl.get(node.url);
-      if (! group) byUrl.set(node.url, group = []);
-      group.push(node);
+      const { base, params } = this.dupUrlParse(node.url);
+      let group = byBase.get(base);
+      if (! group) byBase.set(base, group = []);
+      group.push({ node, params });
     }
     const dups = [];
-    for (const group of byUrl.values()) {
+    for (const group of byBase.values()) {
       if (group.length < 2) continue;
-      for (const node of group) {
-        node.dupMatch = true;
-        dups.push(node);
-        // keep every ancestor visible, so each duplicate is shown within
-        // its original structure
-        let parent = node.parent;
-        while (parent && (! parent.dupPath)) {
-          parent.dupPath = true;
-          parent = parent.parent;
+      for (const cluster of this.dupQueryClusters(group)) {
+        if (cluster.length < 2) continue;
+        for (const { node } of cluster) {
+          node.dupMatch = true;
+          dups.push(node);
+          // keep every ancestor visible, so each duplicate is shown within
+          // its original structure
+          let parent = node.parent;
+          while (parent && (! parent.dupPath)) {
+            parent.dupPath = true;
+            parent = parent.parent;
+          }
         }
       }
     }

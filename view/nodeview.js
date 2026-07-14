@@ -77,7 +77,8 @@ export class NodeView extends Node {
     }
 
     // duplicate view marks (visual only, see TreeView.action_toggleDupView):
-    // dup-node = this node's URL appears more than once in the session,
+    // dup-node = this node's URL appears more than once in the session
+    //            (see TreeView.markDupNodes for what counts as a match),
     // dup-path = an ancestor shown so its duplicates keep their structure
     this.$.classList.toggle('dup-node', !! this.dupMatch);
     this.$.classList.toggle('dup-path', !! this.dupPath);

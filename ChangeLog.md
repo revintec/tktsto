@@ -8,9 +8,13 @@ What changed, and when?  You know the drill.
 Changes:
 
 - New `Dup` toggle button in the sidebar's top bar: when on, the tree shows
-  only nodes whose URL appears more than once anywhere in the session, each
-  in its original window / order / position (with ancestors shown for
-  context, and collapsed branches opened just for the view), to make it easy
+  only nodes whose URL appears more than once anywhere in the session.
+  URLs match when they share a domain and path; `#fragments` are ignored,
+  and query strings only tell pages apart when a key present in every
+  candidate has different values (keys missing from some candidates are
+  ignored).  Each duplicate is shown in its original window / order /
+  position (with ancestors shown for context, and collapsed branches opened
+  just for the view), to make it easy
   to spot duplicates and deduplicate or move them around.  It's purely
   visual: nothing about the underlying tree data changes, and turning it off
   puts the view back exactly the way it was.
