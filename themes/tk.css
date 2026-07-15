@@ -998,6 +998,11 @@ foo {
   color: #e25be2;
 }
 
+#hover-menu .note-button, .note-button {
+  /* click to add a new note node */
+  color: var(--note-fg);
+}
+
 /******************** drag-n-drop ********************/
 
 .dragging {

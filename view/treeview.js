@@ -1159,10 +1159,15 @@ export class TreeView extends Tree {
     return this.action_prevOrNextTab(event, 'next');
   }
 
-  async addNodeAsPrevOrNextVisibleRow (position) {
+  async addNodeAsPrevOrNextVisibleRow (position, event) {
     // ensure valid position: prev or next
     if (undefined === position) position = 'next';
     if ('next' !== position) position = 'prev';
+
+    // mouse clicks (hoverMenu) act on the hovered row, not the keyboard cursor
+    if (event && ('click' === event.type) && this.mouseNode
+        && (this.mouseNode !== this.cursor))
+      await this.setCursor(this.mouseNode);
 
     // pretend to be a node
     const fake = {
@@ -1230,11 +1235,11 @@ export class TreeView extends Tree {
   }
 
   async action_addNodeAsNextVisibleRow (event) {
-    return await this.addNodeAsPrevOrNextVisibleRow('next');
+    return await this.addNodeAsPrevOrNextVisibleRow('next', event);
   }
 
   async action_addNodeAsPrevVisibleRow (event) {
-    return await this.addNodeAsPrevOrNextVisibleRow('prev');
+    return await this.addNodeAsPrevOrNextVisibleRow('prev', event);
   }
 
   async action_deleteNode(event) {
@@ -2288,6 +2293,10 @@ export class TreeView extends Tree {
     }
     if (! this.$hoverMenuTask) {
       this.$hoverMenuTask = makeBtn(this, 'task-button', 'T', 'taskEdit');
+    }
+    if (! this.$hoverMenuNote) {
+      this.$hoverMenuNote = makeBtn(this, 'note-button', 'N',
+        'addNodeAsNextVisibleRow');
     }
     if (! this.$hoverMenuEdit) {
       this.$hoverMenuEdit = makeBtn(this, 'edit-button', 'E', 'editNode');
