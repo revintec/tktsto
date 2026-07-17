@@ -593,6 +593,12 @@ export class Tree {
         }, { reason: 'onTabCreated' });
         // put the tab in the right position
         await savedTabNode.reorderAllTabsInThisWindow();
+        // ensure only one tab is 'active', and let the TreeViews know
+        // (same reasoning as the new-tab sync below: an onTabActivated
+        //  event can arrive before this node has its tabId attached)
+        const savedWinNode = savedTabNode.getWindowNode();
+        if (savedWinNode)
+          await savedWinNode.setActiveTab({ reason: 'onTabCreated' });
         return;
       }
 
@@ -788,13 +794,17 @@ export class Tree {
         debug('Tree.onTabCreated(default) not moving new tab');
       }
       // create the tree node
+      // (created as not-active on purpose: activation is synced from
+      //  the browser below, so it always flows through setActive() and
+      //  the TreeViews hear about it; setting it directly here would
+      //  skip that event and leave two tabs marked active until then)
       const newNode = await destParent.addChild(destIndex, {
         windowId: tab.windowId,
         tabId: tab.id,
         title: tab.title,
         url: tab.url,
         loaded: true,
-        active: tab.active,
+        active: false,
         discarded: tab.discarded,
         frozen: tab.frozen,
         hidden: tab.hidden,  // firefox only?
@@ -808,6 +818,13 @@ export class Tree {
       // can find and join the group
       if (naturalExternal && newNode)
         newNode.naturalExternalRoot = (naturalExternalRoot || newNode);
+      // ensure only one tab is 'active', and let the TreeViews know
+      // (the onTabActivated event for this tab often arrives while the
+      //  node is still being created, so its sync can run too early
+      //  and miss the new tab; this sync happens after the node exists,
+      //  so it's guaranteed to see it.  it's debounced, so back-to-back
+      //  events coalesce into a single check)
+      if (newNode) await winNode.setActiveTab({ reason: 'onTabCreated' });
     }
     finally { unlock(); }
   }

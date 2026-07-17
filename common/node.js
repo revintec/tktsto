@@ -1764,9 +1764,9 @@ export class Node {
     // sync loaded state, maybe
     if (undefined !== args.loaded) this.loaded = args.loaded;
     // let others know
-    if (['userAction', 'onTabActivated', 'onTabAttached',
+    if (['userAction', 'onTabCreated', 'onTabActivated', 'onTabAttached',
       'onWindowFocusChanged', 'onWindowRemoved',
-      'reorderAllTabsInThisWindow'
+      'reorderAllTabsInThisWindow', 'mergeOpenWindowsIntoTree'
     ].includes(args.reason)) {
       // in case the 'loaded' state somehow got desynced or corrupted,
       // this event means we know it *must* be in a loaded state

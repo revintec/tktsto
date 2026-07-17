@@ -624,6 +624,11 @@ export class NodeView extends Node {
       this.$refreshAncestry();
     }
 
+    // a tab which arrives already marked active never gets its own
+    // setActive event, so follow it here to keep the cursor in sync
+    if (newNode.isActive() && newNode.isLoaded() && (! newNode.isWindow()))
+      await newNode.followActiveTab(true, extra[0]);
+
     return newNode;
   }
 
@@ -673,8 +678,17 @@ export class NodeView extends Node {
     return await this.renderIfChanged(super.updateCheckboxes(...args));
   }
 
-  async setTabFields (...args) {
-    return await this.renderIfChanged(super.setTabFields(...args), true);
+  async setTabFields (changes, args) {
+    const wasActive = this.active;
+    const changed =
+      await this.renderIfChanged(super.setTabFields(changes, args), true);
+    // 'active' can arrive via bulk field changes too (like when the
+    // service worker restarts and re-merges open windows), so treat a
+    // real transition like a setActive event and follow it
+    if (changed && (undefined !== changes?.active)
+      && ((!! changes.active) !== (!! wasActive))
+    ) await this.followActiveTab(this.active, args);
+    return changed;
   }
 
   async load (...args) {
@@ -928,57 +942,66 @@ export class NodeView extends Node {
     // abort on no-op
     if (! changed) return;
 
-    // move the cursor maybe
-    // if we're in window mode and the new active tab is in OUR window
-    // or if we're in session mode and the new active tab isn't a TreeView
-    // note: setActive() can be called on a window node too, not just a tab
-    //       so we handle window focus changes here too
-    if (this.tree.cfg.cursorFollowsActiveTab) {
-      const myUrl = api.runtime.getURL('/view/sidepanel.html');
-      const sessionMode = ('session' === this.tree.viewScope);
-      let winNode;
-      if ((! sessionMode) || (! this.isWindow())) {
-        winNode = this.getWindowNode();
-      } else {
-        winNode = this;
-        // active?  focus the current tab
-        // deactivated?  un-override the active tab so parents can collapse
-        // (unless new active tab is a TreeView)
-        if (! active) {
-          // check the active tab of the active window, if we can
-          // ... and if it's a TreeView, don't remove our override
-          const activeWinNode = this.tree.nodes[args.focusedNodeId];
-          const activeTab = activeWinNode?.getActiveTab();
-          if (activeTab?.url !== myUrl) {
-            this.tree.expandOverride(winNode.prevActiveTab, null);
-            winNode = null;
-          }
-        }
-      }
+    await this.followActiveTab(active, args);
+    return await this.renderIfChanged(changed);
+  }
 
-      const isOurWindow = (winNode?.windowId === this.tree.windowId);
-      if (winNode && (sessionMode || isOurWindow)) {
-        const activeTab = winNode.getActiveTab();
-        // don't move cursor if we're focusing our own TreeView in Tab mode
-        // (like, in standalone window mode)
-        if (sessionMode && (myUrl === activeTab?.url)) {}
-        else if (activeTab) {
-          if (this.tree.cfg.activeTabExpandsItsParents) {
-            // force expand new active tab
-            this.tree.expandOverride(activeTab, true);
-            // un-override previous active tab
-            if (activeTab !== winNode.prevActiveTab)
-              this.tree.expandOverride(winNode.prevActiveTab, null);
-          }
-          if (activeTab.hasKids()) activeTab.$renderChildren();
-          // wait for expansion changes to take effect before moving cursor
-          // (otherwise scrolling is glitchy sometimes)
-          setTimeout(() => { this.tree.setCursor(activeTab); }, 1);
-          winNode.prevActiveTab = activeTab;
+  // move the cursor to follow the window's active tab, maybe:
+  // if we're in window mode and the new active tab is in OUR window,
+  // or if we're in session mode and the new active tab isn't a TreeView.
+  // 'this' is the node whose 'active' state changed (a tab or a window;
+  // window focus changes are handled here too).
+  // Every code path which changes a node's 'active' state must funnel
+  // through here, so the cursor stays in sync no matter how the change
+  // arrived (setActive event, node added already-active, tab fields
+  // synced in bulk, ...).
+  async followActiveTab (active, args) {
+    await this.tree.treeViewLoaded;
+    if (! this.tree.cfg.cursorFollowsActiveTab) return;
+
+    const myUrl = api.runtime.getURL('/view/sidepanel.html');
+    const sessionMode = ('session' === this.tree.viewScope);
+    let winNode;
+    if ((! sessionMode) || (! this.isWindow())) {
+      winNode = this.getWindowNode();
+    } else {
+      winNode = this;
+      // active?  focus the current tab
+      // deactivated?  un-override the active tab so parents can collapse
+      // (unless new active tab is a TreeView)
+      if (! active) {
+        // check the active tab of the active window, if we can
+        // ... and if it's a TreeView, don't remove our override
+        const activeWinNode = this.tree.nodes[args?.focusedNodeId];
+        const activeTab = activeWinNode?.getActiveTab();
+        if (activeTab?.url !== myUrl) {
+          this.tree.expandOverride(winNode.prevActiveTab, null);
+          winNode = null;
         }
       }
     }
-    return await this.renderIfChanged(changed);
+
+    const isOurWindow = (winNode?.windowId === this.tree.windowId);
+    if (winNode && (sessionMode || isOurWindow)) {
+      const activeTab = winNode.getActiveTab();
+      // don't move cursor if we're focusing our own TreeView in Tab mode
+      // (like, in standalone window mode)
+      if (sessionMode && (myUrl === activeTab?.url)) {}
+      else if (activeTab) {
+        if (this.tree.cfg.activeTabExpandsItsParents) {
+          // force expand new active tab
+          this.tree.expandOverride(activeTab, true);
+          // un-override previous active tab
+          if (activeTab !== winNode.prevActiveTab)
+            this.tree.expandOverride(winNode.prevActiveTab, null);
+        }
+        if (activeTab.hasKids()) activeTab.$renderChildren();
+        // wait for expansion changes to take effect before moving cursor
+        // (otherwise scrolling is glitchy sometimes)
+        setTimeout(() => { this.tree.setCursor(activeTab); }, 1);
+        winNode.prevActiveTab = activeTab;
+      }
+    }
   }
 
 }  // end class NodeView
