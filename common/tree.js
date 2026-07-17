@@ -653,6 +653,18 @@ export class Tree {
           && activeTab && ((activeTab.index + 1) === tab.index)) {
           openerNode = activeTabNode;
         }
+        // no openerTabId, but the current tab is in focus (window
+        // focused, user hasn't switched away), so the tab came from
+        // browser UI (like an extension popup) rather than from
+        // outside the browser: credit the current tab, so the new tab
+        // opens right next to it as its immediate 1st child
+        // (and background tabs batch up like C-clicked links)
+        else if (activeTabNode && winNode.isActive()
+          && (undefined === activeTabNode.naturalAwaySince)
+          && (tab.index >= loadedTabNodes.length)) {
+          openerNode = activeTabNode;
+          debug(`Tree.onTabCreated(natural) crediting in-focus tab as opener: "${activeTabNode.toLine()}"`);
+        }
       }
 
       // natural ordering only batches tabs opened in the background

@@ -262,6 +262,10 @@
     current tab is one of them, the next outside tab becomes the last
     child of the group instead of stacking up in front, so a quick
     series of outside tabs stays in the order it was opened.
+    A tab opened without an opener tab while the current tab is in
+    focus (from an extension popup, for example) isn't from outside
+    the browser, so it opens right next to the current tab as its
+    first child instead.
     </small>
   </div>
 
