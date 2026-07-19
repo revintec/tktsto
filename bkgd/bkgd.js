@@ -276,6 +276,25 @@ class Bkgd {
     // and gives us the option to add items to that menu
   }
 
+  // Figure out whether this is a service worker restart (tab and window
+  // IDs saved in the tree are still valid) or an actual browser restart
+  // (saved IDs are stale, and could even collide with unrelated tabs).
+  // storage.session lives exactly as long as the IDs do -- it survives
+  // service worker restarts, and gets wiped when the browser exits --
+  // so a marker there tells us which kind of boot this is.
+  async detectSameBrowserSession () {
+    const marker = 'browserSessionStarted';
+    try {
+      const stored = await api.storage.session.get(marker);
+      if (stored && stored[marker]) return true;
+      await api.storage.session.set({ [marker]: Date.now() });
+    } catch (err) {
+      // browser has no storage.session: can't tell, assume IDs are stale
+      warn('detectSameBrowserSession() failed', err);
+    }
+    return false;
+  }
+
   async mergeOpenWindowsIntoTree () {
     log('mergeOpenWindowsIntoTree()');
     let windows;
@@ -286,6 +305,14 @@ class Bkgd {
       // where it couldn't even return a list of windows...
       return error('failed to get list of windows', err);
     }
+
+    // when the service worker restarted (browser kept running), the
+    // tabIds saved in the tree are still valid, and are more reliable
+    // than URL matching... because pages can navigate themselves (JS
+    // redirect, meta refresh, SPA history update) while the worker is
+    // asleep, which changes the URL but never the tabId
+    const sameBrowserSession = await this.detectSameBrowserSession();
+    log(`mergeOpenWindowsIntoTree(): sameBrowserSession=${sameBrowserSession}`);
 
     console.time('mergeOpenWindowsIntoTree');
     // attach browser windows to window nodes
@@ -311,7 +338,8 @@ class Bkgd {
       //let winNode = this.tree.root.getWindowId(window.id);
       // search for a Window in the tree with matching tabs
       const match = this.tree.findMatchingWindow(window,
-        claimedWinNodes, claimedTabNodes);
+        claimedWinNodes, claimedTabNodes,
+        { trustTabIds: sameBrowserSession });
       let winNode = match.winNode;
       // persist the loaded -> wasLoaded demotions findMatchingWindow just
       // did in memory, so stale 'loaded' copies in the DB can't outrank
@@ -389,6 +417,15 @@ class Bkgd {
             hidden: tab.hidden,
             incognito: tab.incognito,
           };
+          // a page can navigate itself while the service worker is
+          // asleep, so for open tabs, the browser's url/title win
+          if (tab.url && (tab.url !== tabNode.url))
+            changes.url = tab.url;
+          // clean up sloppy titles (same as onTabUpdated)
+          const tabTitle = tab.title
+            ? tab.title.trim().replace(/\s+/g, ' ') : tab.title;
+          if (tabTitle && (tabTitle !== tabNode.title))
+            changes.title = tabTitle;
           let changed = false;
           for (const [key, value] of Object.entries(changes))
           { if (tabNode[key] !== value) changed = true; }

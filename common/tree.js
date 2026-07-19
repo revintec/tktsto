@@ -1592,7 +1592,15 @@ export class Tree {
   // wiping the tabIds assigned earlier in this merge, which then caused
   // mergeOpenWindowsIntoTree() to re-create every tab of the bigger
   // window as a duplicate node... on every service worker restart.
-  findMatchingWindow (window, claimedWinNodes = null, claimedTabNodes = null) {
+  //
+  // opts.trustTabIds: the tabIds saved in the tree are known to be from
+  // the current browser session (service worker restart, not browser
+  // restart), so they're authoritative: a tab keeps its ID for life,
+  // even when its page navigates itself to a new URL in the background.
+  // Nodes get matched by tabId first, and URL matching is the fallback.
+  findMatchingWindow (window, claimedWinNodes = null, claimedTabNodes = null,
+    opts = {}) {
+    const trustTabIds = (!! opts.trustTabIds);
     // find the "needle" (realTabList) in the "haystack"
     const result = {};  // data to return
     result.loadedTabNodesWithNoTab = [];
@@ -1613,8 +1621,26 @@ export class Tree {
       const tabList = winNode.getLoadedAndUnloadedTabs();
       haystack.push({ winNode, tabList });
     }
-    // evaluate each candidate to find the best one
-    const bestMatch = findClosestWindowMatch(realTabList, haystack);
+    // evaluate each candidate to find the best one...
+    // when tabIds can be trusted, the window node holding the most
+    // still-open tabIds wins -- URLs may have changed while the service
+    // worker was asleep, but tabIds can't (a window whose only tab
+    // navigated itself would fail URL matching entirely, and end up
+    // demoted to pink plus re-created as a duplicate)
+    let bestMatch = null;
+    if (trustTabIds) {
+      const realTabIds = new Set(realTabList.map((t) => t.id));
+      let bestCount = 0;
+      for (const candidate of haystack) {
+        const count = candidate.tabList.reduce(
+          (acc, n) => acc + (realTabIds.has(n.tabId) ? 1 : 0), 0);
+        if (count > bestCount) { bestCount = count; bestMatch = candidate; }
+      }
+      if (bestMatch)
+        debug(`findMatchingWindow(tabIds: ${bestCount}): ${bestMatch.winNode.toLine()}`);
+    }
+    if (! bestMatch)
+      bestMatch = findClosestWindowMatch(realTabList, haystack);
     // bestMatch may be null if nothing good was found
     if (bestMatch) {
       // attach the window node to the browser window
@@ -1639,7 +1665,39 @@ export class Tree {
         (n) => { return (! n.isWindow()); }
       )) { if (! tabNodeList.includes(tabNode)) tabNodeList.push(tabNode); }
       // now attach browser tab IDs to nodes
+      // pass 1: match nodes to tabs by tabId (when trustworthy), so a
+      // page which navigated itself in the background stays attached
+      // to its node instead of being demoted to 'wasLoaded' (pink) and
+      // re-created as a duplicate.  This must be a separate pass:
+      // otherwise an earlier node's URL match could steal a tab that a
+      // later node owns by tabId, demoting the later node.
+      const attachedByTabId = new Set();
+      if (trustTabIds) {
+        for (const tabNode of tabNodeList) {
+          // don't steal (or demote) nodes already attached to another
+          // browser window's tabs earlier in this merge pass
+          if (claimedTabNodes && claimedTabNodes.has(tabNode)) continue;
+          if (undefined === tabNode.tabId) continue;
+          for (const realTab of realTabList) {
+            // skip tabs we've already assigned to a node
+            if (realTab.attached) continue;
+            // this node matches the real tab
+            if (tabNode.tabId === realTab.id) {
+              realTab.attached = true;
+              attachedByTabId.add(tabNode);
+              // FIXME: use setTabFields()
+              tabNode.loaded = true;
+              tabNode.wasLoaded = false;
+              if (claimedTabNodes) claimedTabNodes.add(tabNode);
+              break;  // stop searching realTabList for this tabNode
+            }
+          }
+        }
+      }
+      // pass 2: match the remaining nodes to tabs by URL
       for (const tabNode of tabNodeList) {
+        // skip nodes already matched by tabId
+        if (attachedByTabId.has(tabNode)) continue;
         // don't steal (or demote) nodes already attached to another
         // browser window's tabs earlier in this merge pass
         if (claimedTabNodes && claimedTabNodes.has(tabNode)) continue;

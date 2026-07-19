@@ -27,6 +27,21 @@ Bug fixes:
   stale copies could outrank (and steal open tabs from) the original
   nodes after the next browser restart.
 
+- Fixed open tabs being **wrongly demoted to pink (`wasLoaded`) and
+  re-created as duplicate nodes** when a page changed its own URL and
+  title in the background (JS redirect, meta refresh, SPA history
+  update) while the service worker was asleep.  The session merge that
+  runs on every worker restart matched tabs to nodes by exact URL only,
+  so a self-navigated tab no longer matched its node: the node went
+  pink and lost its tab ID, and the tab got a brand-new duplicate node.
+  Now the merge tells service worker restarts apart from browser
+  restarts (via `storage.session`, which lives exactly as long as tab
+  IDs stay valid), and matches tabs by tab ID first -- a tab keeps its
+  ID for life no matter where it navigates -- falling back to URL
+  matching only when the IDs can't be trusted.  The merge also updates
+  an attached node's url/title from the browser tab, since for open
+  tabs the browser is the source of truth.
+
 Changes:
 
 - New `Dup` toggle button in the sidebar's top bar: when on, the tree shows
