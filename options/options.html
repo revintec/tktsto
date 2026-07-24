@@ -265,7 +265,9 @@
     A tab opened without an opener tab while the current tab is in
     focus (from an extension popup, for example) isn't from outside
     the browser, so it opens right next to the current tab as its
-    first child instead.
+    first child instead &mdash; unless the current tab is part of a
+    group of outside tabs, since each tab of an outside series
+    focuses the window; then the new tab joins the group as usual.
     </small>
   </div>
 

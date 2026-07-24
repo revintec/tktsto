@@ -665,9 +665,16 @@ export class Tree {
         // outside the browser: credit the current tab, so the new tab
         // opens right next to it as its immediate 1st child
         // (and background tabs batch up like C-clicked links)
+        // ... but not when the current tab is part of a group of tabs
+        // opened from outside the browser: each tab of an outside
+        // series focuses the window and becomes the current tab, so
+        // the next tab of the series looks "in focus" here even though
+        // it's from outside too; leave it opener-less so it joins the
+        // group below instead of nesting under the previous tab
         else if (activeTabNode && winNode.isActive()
           && (undefined === activeTabNode.naturalAwaySince)
-          && (tab.index >= loadedTabNodes.length)) {
+          && (tab.index >= loadedTabNodes.length)
+          && (! this.naturalExternalRootOf(activeTabNode))) {
           openerNode = activeTabNode;
           debug(`Tree.onTabCreated(natural) crediting in-focus tab as opener: "${activeTabNode.toLine()}"`);
         }
