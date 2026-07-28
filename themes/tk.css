@@ -375,6 +375,16 @@ body.dup-view .dup-node > .row {
   border-radius: var(--cursor-radius-collapsed);
 }
 
+/* filter view:
+ * gated on body.filter-view, toggled by the bottom-bar "Filter" button.
+ * shows only nodes whose title or url contains the text typed into the
+ * filter box (.filter-node), plus their ancestors (.filter-path) so each
+ * match keeps its original window / order / structure.  purely visual --
+ * the tree data itself is untouched (see TreeView.action_toggleFilterView). */
+body.filter-view #tree-view .node:not(.filter-node):not(.filter-path) {
+  display: none;
+}
+
 /* outer structure...
  * #tree-root.nodes.root-nodes
  *   #noderoot.node.root-nodes

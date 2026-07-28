@@ -44,6 +44,15 @@ Bug fixes:
 
 Changes:
 
+- New `Filter` toggle button in the sidebar's bottom bar, replacing the
+  `Donate` button: when on, an input box appears above the bottom buttons,
+  and the tree shows only the nodes whose title or URL contains the entered
+  text (case-insensitive), plus their ancestors for context.  Matches
+  buried inside collapsed branches are revealed with the same view-only
+  expansion the search feature uses.  It's purely visual: nothing about the
+  underlying tree data changes, and turning it off (via the button, or
+  `Escape` in the filter box) puts the view back exactly the way it was.
+
 - New `Dup` toggle button in the sidebar's top bar: when on, the tree shows
   only nodes whose URL appears more than once anywhere in the session.
   URLs match when they share a domain and path; `#fragments` are ignored,

@@ -83,6 +83,12 @@ export class NodeView extends Node {
     this.$.classList.toggle('dup-node', !! this.dupMatch);
     this.$.classList.toggle('dup-path', !! this.dupPath);
 
+    // filter view marks (visual only, see TreeView.action_toggleFilterView):
+    // filter-node = this node's title or url contains the filter text,
+    // filter-path = an ancestor shown so its matches keep their structure
+    this.$.classList.toggle('filter-node', !! this.filterMatch);
+    this.$.classList.toggle('filter-path', !! this.filterPath);
+
     // are we a window?
     if (this.isWindow()) {
       this.$.classList.add('window');

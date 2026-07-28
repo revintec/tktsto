@@ -64,6 +64,12 @@ export class TreeView extends Tree {
     this.dupViewActive = false;
     this.dupExpandOverrides = [];
     this.dupViewPrevScope = null;
+
+    // "filter view" toggle state (see action_toggleFilterView);
+    // purely visual, never saved, always starts turned off
+    this.filterViewActive = false;
+    this.filterString = '';
+    this.filterExpandOverrides = [];
   }
 
   destroy () {
@@ -114,6 +120,21 @@ export class TreeView extends Tree {
       });
     }
 
+    // filter box, above the bottom buttons (see action_toggleFilterView)
+    this.$filterBar = doc.getElementById('filter-bar');
+    this.$filterEntry = doc.getElementById('filter-entry');
+    if (! this.isInert) {
+      this.$filterEntry.addEventListener('input', (event) => {
+        return this.onFilterEntryUpdated(event);
+      });
+      this.$filterEntry.addEventListener('focus', (event) => {
+        return this.onFilterEntryFocused(event);
+      });
+      this.$filterEntry.addEventListener('blur', (event) => {
+        return this.onFilterEntryUnfocused(event);
+      });
+    }
+
     // drag-n-drop scroll zone size
     this.dragScrollZone = 0.15;  // 15% top and bottom
 
@@ -130,8 +151,8 @@ export class TreeView extends Tree {
     this.$backupBtn = doc.getElementById('backup-btn');
     // open the extension's options page
     this.$optionsBtn = doc.getElementById('options-btn');
-    // help the project survive, and help me pay rent
-    this.$donateBtn = doc.getElementById('donate-btn');
+    // toggle the tree filter box
+    this.$filterBtn = doc.getElementById('filter-btn');
     // open the extension's help page
     this.$helpBtn = doc.getElementById('help-btn');
 
@@ -271,6 +292,9 @@ export class TreeView extends Tree {
     // a reload replaces every Node object, which drops the view-only
     // duplicate-view marks; recompute them so the filter stays correct
     if (this.dupViewActive) this.markDupNodes();
+    // same for the view-only filter marks
+    if (this.filterViewActive && this.filterString)
+      this.markFilterNodes(this.filterString);
 
     // render ... everything
     if (render) this.$renderWholeTree();
@@ -491,9 +515,10 @@ export class TreeView extends Tree {
   }
 
   async action_endSearch () {
-    // cancel the search, or un-override expanded branches
+    // cancel the search or filter, or un-override expanded branches
     debug('endSearch');
     if (this.searchActive) await this.cancelSearch();
+    else if (this.filterViewActive) await this.disableFilterView();
     else await this.expandOverrideClear();
   }
 
@@ -705,6 +730,11 @@ export class TreeView extends Tree {
       const passThru = this.searchKeyHandler(event);
       if (! passThru) return;
     }
+    // likewise while typing in the filter box
+    if (this.filterCaptureInput) {
+      const passThru = this.filterKeyHandler(event);
+      if (! passThru) return;
+    }
     // calculate a more complete name for this event,
     // then call the keyboard event dispatcher
     const keyName = buildEventName(event);
@@ -743,6 +773,7 @@ export class TreeView extends Tree {
     // don't try to handle mouse events while a dialog is visible
     if (this.dialogActive) return;
     if (this.searchCaptureInput) return;
+    if (this.filterCaptureInput) return;
 
     // stop scrolling if mouse left the tree view
     if ((isFirefox && (! event.relatedTarget))
@@ -2325,6 +2356,8 @@ export class TreeView extends Tree {
     // hover menu totally breaks $searchEntry, so don't allow it
     // (hover menu steals focus somehow, if mouse is over the TreeView)
     if (this.searchCaptureInput) return;
+    // same problem with $filterEntry
+    if (this.filterCaptureInput) return;
     // skip extra drawing if the menu hasn't changed
     if (this.hoverMenuLast === this.mouseNode) return;
     this.hoverMenuLast = this.mouseNode;
@@ -2733,9 +2766,9 @@ export class TreeView extends Tree {
     this.$optionsBtn.addEventListener('click', () => {
       this.onOptionsBtnClick();
     });
-    // help me survive
-    this.$donateBtn.addEventListener('click', () => {
-      this.onDonateBtnClick();
+    // filter the visible tree by title / url text
+    this.$filterBtn.addEventListener('click', () => {
+      this.onFilterBtnClick();
     });
     // open the user manual
     this.$helpBtn.addEventListener('click', () => {
@@ -2906,6 +2939,8 @@ export class TreeView extends Tree {
     // update the display
     this.$renderViewScopeBtn();
     this.$renderWholeTree();
+    // recompute the filter marks for the new scope
+    if (this.filterViewActive && this.filterString) this.updateFilter();
     this.ensureCursorVisible();
     this.setStatus(`View scope: ${this.viewScope}`);
     // tell bkgd we changed viewScope
@@ -3270,10 +3305,181 @@ export class TreeView extends Tree {
     this.openInternalPage('/options/options.html');
   }
 
-  onDonateBtnClick () {
-    // redirects to the correct page,
-    // handy if I need to change platforms
-    this.openExternalPage('https://toykeeper.net/tktsto/donate');
+  // ---- filter view -------------------------------------------------------
+  // a visual filter, toggled by the bottom-bar "Filter" button: shows an
+  // input box above the bottom buttons, and displays only the nodes whose
+  // title or url contains the entered text, plus their ancestors for
+  // context (see "filter-view" rules in themes/tk.css).  like the dup
+  // view, it never changes the underlying tree data: hiding is done with
+  // CSS classes, and buried matches are revealed with the same view-only
+  // expansion overrides the search feature uses.
+
+  onFilterBtnClick () {
+    return this.action_toggleFilterView({ type: 'click' });
+  }
+
+  async action_toggleFilterView (event) {
+    if (this.filterViewActive) await this.disableFilterView();
+    else await this.enableFilterView();
+  }
+
+  async enableFilterView () {
+    // hover menu steals focus from $filterEntry, force hide it
+    this.hideHoverMenu();
+    this.filterViewActive = true;
+    this.$filterBar.classList.remove('hidden');
+    this.$renderFilterBtn();
+    await this.updateFilter();
+    this.$filterEntry.classList.add('focus');
+    this.$filterEntry.focus();
+    this.setStatus('Filter: type to show only matching nodes');
+  }
+
+  async disableFilterView () {
+    this.filterViewActive = false;
+    this.$filterEntry.classList.remove('focus');
+    this.$filterEntry.blur();
+    this.$filterBar.classList.add('hidden');
+    this.filterString = '';
+    this.$filterEntry.value = '';
+    await this.updateFilter();
+    this.$renderFilterBtn();
+    await this.ensureCursorVisible();
+    this.setStatus('Filter: off');
+  }
+
+  // flag nodes whose title or url contains the filter text (filterMatch),
+  // and their ancestors (filterPath); NodeView.$render() mirrors the flags
+  // onto the elements as CSS classes.  returns the list of matching nodes.
+  markFilterNodes (text) {
+    this.clearFilterMarks();
+    text = text.toLowerCase();
+    const matches = this.viewRoot.findNodes((n) => (
+      (n.title && n.title.toLowerCase().includes(text))
+      || (n.url && n.url.toLowerCase().includes(text))));
+    for (const node of matches) {
+      node.filterMatch = true;
+      // keep every ancestor visible, so each match is shown within
+      // its original structure
+      let parent = node.parent;
+      while (parent && (! parent.filterPath)) {
+        parent.filterPath = true;
+        parent = parent.parent;
+      }
+    }
+    return matches;
+  }
+
+  clearFilterMarks () {
+    this.root.filterMatch = false;
+    this.root.filterPath = false;
+    this.root.forEachRecursive((n) => {
+      n.filterMatch = false;
+      n.filterPath = false;
+    });
+  }
+
+  async updateFilter () {
+    // an empty (or disabled) filter shows everything
+    if ((! this.filterViewActive) || (! this.filterString)) {
+      // drop the view-only expansion overrides added by earlier updates,
+      // leaving any others (like the active tab's) alone
+      for (const node of this.filterExpandOverrides) {
+        await this.expandOverride(node, null);
+      }
+      this.filterExpandOverrides = [];
+      this.clearFilterMarks();
+      this.$body.classList.remove('filter-view');
+      this.$renderWholeTree();
+      return;
+    }
+
+    const matches = this.markFilterNodes(this.filterString);
+
+    // hide everything that isn't a match or an ancestor of one
+    this.$body.classList.add('filter-view');
+    this.$renderWholeTree();
+
+    // drop the expansion overrides whose nodes no longer match
+    const matchSet = new Set(matches);
+    const keep = [];
+    for (const node of this.filterExpandOverrides) {
+      if (matchSet.has(node)) keep.push(node);
+      else await this.expandOverride(node, null);
+    }
+    this.filterExpandOverrides = keep;
+
+    // reveal matches buried inside collapsed branches
+    for (const node of matches) {
+      if (this.expandOverrides[node.id]) continue;  // already overridden
+      if (node.isVisible(this.viewRoot)) continue;  // already visible
+      await this.expandOverride(node, true);
+      this.filterExpandOverrides.push(node);
+    }
+
+    this.setStatus(`Filter: showing ${matches.length} matching nodes`);
+  }
+
+  // reflect the filter state on the toggle button (pressed = on)
+  $renderFilterBtn () {
+    if (! this.$filterBtn) return;
+    this.$filterBtn.classList.toggle('pressed', !! this.filterViewActive);
+  }
+
+  filterKeyHandler (event) {
+    const keyName = buildEventName(event);
+    // allow specific events to fall through to the main key handler
+    const passThru = {
+      'ArrowUp' : true,
+      'ArrowDown' : true,
+      'PageUp' : true,
+      'PageDown' : true,
+    };
+    if (passThru[keyName]) return true;
+
+    switch (keyName) {
+      case 'Escape':
+        event.preventDefault();
+        event.stopPropagation();
+        this.disableFilterView();
+        break;
+      case 'Enter':
+        // give keyboard focus back to the main TreeView,
+        // but keep the filter active
+        event.preventDefault();
+        event.stopPropagation();
+        this.$filterEntry.blur();
+        break;
+      default:
+        break;
+    }
+  }
+
+  async onFilterEntryUpdated (event) {
+    if (! this.filterViewActive) return;
+
+    // debounce, so it won't update too fast while typing
+    if (this.onFilterEntryUpdatedTimer)
+      clearTimeout(this.onFilterEntryUpdatedTimer);
+    this.onFilterEntryUpdatedTimer = setTimeout(() => {
+      const oldVal = this.filterString;
+      const newVal = this.$filterEntry.value;
+      debug(`filter: ${newVal}`);
+      this.filterString = newVal;
+      if (newVal !== oldVal) this.updateFilter();
+    }, 250);
+  }
+
+  onFilterEntryFocused (event) {
+    debug('focus');
+    this.filterCaptureInput = true;
+    this.$filterEntry.classList.add('focus');
+  }
+
+  onFilterEntryUnfocused (event) {
+    debug('unfocus');
+    this.filterCaptureInput = false;
+    this.$filterEntry.classList.remove('focus');
   }
 
   onHelpBtnClick () {
