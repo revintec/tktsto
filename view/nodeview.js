@@ -143,6 +143,7 @@ export class NodeView extends Node {
     //if (!this.parent.$nodes) return;
     //debug('Node.$render parent');
     //this.parent.$nodes.append(this.$);
+    this.tree.scheduleSelectionHighlight();
   }
 
   $destroy () {
@@ -150,6 +151,7 @@ export class NodeView extends Node {
     if (this.$) {
       //debug('remove');
       this.$.remove();
+      this.tree.scheduleSelectionHighlight();
     }
   }
 
@@ -587,6 +589,8 @@ export class NodeView extends Node {
     // move the cursor to a new valid node if necessary
     if (newCursor) this.tree.setCursor(newCursor);
 
+    this.tree.scheduleDuplicateRefresh();
+
     return changed;
   }
 
@@ -635,6 +639,7 @@ export class NodeView extends Node {
     if (newNode.isActive() && newNode.isLoaded() && (! newNode.isWindow()))
       await newNode.followActiveTab(true, extra[0]);
 
+    this.tree.scheduleDuplicateRefresh();
     return newNode;
   }
 
@@ -694,6 +699,8 @@ export class NodeView extends Node {
     if (changed && (undefined !== changes?.active)
       && ((!! changes.active) !== (!! wasActive))
     ) await this.followActiveTab(this.active, args);
+    if (changed && ('url' in changes || 'type' in changes))
+      this.tree.scheduleDuplicateRefresh();
     return changed;
   }
 
@@ -744,8 +751,21 @@ export class NodeView extends Node {
     const wasExpanded = this.isExpanded();
     const wasVisible = this.isVisible();
 
-    // move it
-    const changed = await super.moveTo(destParent, destIndex, ...extra);
+    // Record only moves belonging to an explicit sidebar operation;
+    // background synchronization and history replay must not add entries.
+    const transaction = ['userAction', 'moveTo'].includes(extra[0]?.reason)
+      ? this.tree.moveHistoryTransaction : null;
+    const before = transaction && this.tree.captureMovePosition(this);
+    let changed;
+    try {
+      changed = await super.moveTo(destParent, destIndex, ...extra);
+    } finally {
+      const after = transaction && this.tree.captureMovePosition(this);
+      if (before && after
+        && (before.parentId !== after.parentId || before.index !== after.index)) {
+        transaction.push({ nodeId: this.id, before, after });
+      }
+    }
     if (! changed) return false;
 
     destParent.$insertChild(this, destIndex);
@@ -794,6 +814,8 @@ export class NodeView extends Node {
 
     // ensure cursor is in the viewport
     if (this === this.tree.cursor) this.tree.scrollNodeIntoView(this);
+
+    this.tree.scheduleDuplicateRefresh();
 
     // report success
     return true;
@@ -1011,4 +1033,3 @@ export class NodeView extends Node {
   }
 
 }  // end class NodeView
-

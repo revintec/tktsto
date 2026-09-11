@@ -58,12 +58,16 @@ export class TreeView extends Tree {
     // undo/redo stacks of { label, undo: async fn, redo: async fn } entries
     this.undoStack = [];
     this.redoStack = [];
+    this.historyMutex = new Mutex();
 
     // "duplicate view" toggle state (see action_toggleDupView);
     // purely visual, never saved, always starts turned off
     this.dupViewActive = false;
     this.dupExpandOverrides = [];
     this.dupViewPrevScope = null;
+    this.duplicateCount = 0;
+    this.rangeSelection = null;
+    this.selectionAnchor = null;
 
     // "filter view" toggle state (see action_toggleFilterView);
     // purely visual, never saved, always starts turned off
@@ -73,6 +77,9 @@ export class TreeView extends Tree {
   }
 
   destroy () {
+    this.duplicateBadgeObserver?.disconnect();
+    this.selectionResizeObserver?.disconnect();
+    if (this.selectionHighlightFrame) this.window.cancelAnimationFrame(this.selectionHighlightFrame);
   }
 
   initElements () {
@@ -80,6 +87,12 @@ export class TreeView extends Tree {
     this.$body = doc.getElementById('body');
     if (! this.$) this.$ = doc.getElementById('tree-view');
     if (! this.$treeRoot) this.$treeRoot = doc.getElementById('tree-root');
+    if (! this.isInert) {
+      this.selectionResizeObserver = new this.window.ResizeObserver(() => {
+        this.scheduleSelectionHighlight();
+      });
+      this.selectionResizeObserver.observe(this.$treeRoot);
+    }
 
     this.cursor = null;
 
@@ -99,11 +112,21 @@ export class TreeView extends Tree {
     this.zoomSteps = 12;
     this.zoomMax = 3;
     this.zoomMin = 1 / this.zoomMax;
-    // optional toggle shown in place of the zoom buttons; flips the
-    // "flatten lone child" display (a node's only child shown as a sibling)
+    // Bottom-bar toggle for the "flatten lone child" display.
     this.$flattenLoneChildBtn = doc.getElementById('flatten-lone-child-btn');
     // toggle for the "duplicate view" (show only duplicated nodes)
     this.$dupBtn = doc.getElementById('dup-btn');
+    this.$dupCount = doc.getElementById('dup-count');
+    this.$locateTabBtn = doc.getElementById('locate-tab-btn');
+    if (! this.isInert && this.$dupCount && this.$dupBtn) {
+      this.duplicateBadgeObserver = new this.window.ResizeObserver(() => {
+        this.positionDuplicateBadge();
+      });
+      this.duplicateBadgeObserver.observe(this.$bottomBar);
+      this.duplicateBadgeObserver.observe(doc.getElementById('bottom-area'));
+      this.duplicateBadgeObserver.observe(this.$dupBtn);
+      this.duplicateBadgeObserver.observe(doc.documentElement);
+    }
 
     this.$searchBar = doc.getElementById('search-bar');
     this.$searchEntry = doc.getElementById('search-entry');
@@ -158,6 +181,9 @@ export class TreeView extends Tree {
 
     // count of marked nodes when non-zero
     this.$markedCount = doc.getElementById('marked-count');
+    this.$markedCountValue = doc.getElementById('marked-count-value');
+    this.$markedActions = doc.getElementById('marked-actions');
+    this.$clearMarkedBtn = doc.getElementById('clear-marked-btn');
 
     // node row hover menu
     this.$hoverMenu = doc.getElementById('hover-menu');
@@ -202,14 +228,16 @@ export class TreeView extends Tree {
         (key, newVal, oldVal) => this.setZoomLevel(newVal, oldVal));
       this.setZoomLevel(this.cfg.treeViewZoomLevel, this.cfg.treeViewZoomLevel);
 
-      // top bar shows either the zoom "+/-" buttons or, when the user opts
-      // to hide them, a single "Flat" toggle for the flatten-lone-child
-      // display.  render the current state and keep it in sync with config.
+      // Keep zoom visibility and the independent bottom-bar Flat toggle
+      // in sync with config.
       this.$renderZoomButtons();
       this.$renderFlattenLoneChildBtn();
       this.cfg.watch('hideZoomButtons', () => this.$renderZoomButtons());
       this.cfg.watch('flattenLoneChild',
-        () => this.$renderFlattenLoneChildBtn());
+        () => {
+          this.$renderFlattenLoneChildBtn();
+          this.scheduleSelectionHighlight();
+        });
 
       // clear "expanded" overrides when this option is turned off
       this.cfg.watch('activeTabExpandsItsParents',
@@ -291,7 +319,9 @@ export class TreeView extends Tree {
 
     // a reload replaces every Node object, which drops the view-only
     // duplicate-view marks; recompute them so the filter stays correct
-    if (this.dupViewActive) this.markDupNodes();
+    this.markDupNodes();
+    this.rangeSelection = null;
+    this.selectionAnchor = null;
     // same for the view-only filter marks
     if (this.filterViewActive && this.filterString)
       this.markFilterNodes(this.filterString);
@@ -354,13 +384,15 @@ export class TreeView extends Tree {
     let plus = '';
     for (const nodeId of this.markedNodes) {
       const node = this.nodes[nodeId];
-      if (node.hasKids()) {
+      if (node?.hasKids()) {
         plus = '+';
         break;
       }
     }
     // update the counter widget
-    this.$markedCount.innerText = `${this.markedNodes.length}${plus}`;
+    (this.$markedCountValue || this.$markedCount).innerText = `${this.markedNodes.length}${plus}`;
+    this.$markedActions?.classList.toggle('hidden', this.markedNodes.length === 0);
+    this.$markedCount.setAttribute('aria-label', `Place ${this.markedNodes.length} selected nodes at the cursor`);
     if (this.markedNodes.length <= 0)
       this.$markedCount.classList.add('hidden');
     else this.$markedCount.classList.remove('hidden');
@@ -371,7 +403,7 @@ export class TreeView extends Tree {
   }
 
   onMarkedCountClick (event) {
-    this.action_pasteMarked(event);
+    return this.runButtonAction('pasteMarked', event);
   }
 
   showSearch () {
@@ -676,12 +708,16 @@ export class TreeView extends Tree {
     // absolutely NEVER scroll horizontally
     this.$body.addEventListener('scroll', () => { this.$body.scrollLeft = 0; });
     //
-    this.window.addEventListener('focus', () => {
-      this.$body.classList.remove('unfocused');
-    });
+    const updateFocus = () => {
+      this.$body.classList.toggle('unfocused', ! this.document.hasFocus());
+    };
+    this.window.addEventListener('focus', updateFocus);
     this.window.addEventListener('blur', () => {
       this.$body.classList.add('unfocused');
     });
+    this.document.addEventListener('focusin', updateFocus);
+    this.document.addEventListener('focusout', () => queueMicrotask(updateFocus));
+    updateFocus();
   }
 
   initKeyHandler () {
@@ -735,6 +771,9 @@ export class TreeView extends Tree {
       const passThru = this.filterKeyHandler(event);
       if (! passThru) return;
     }
+    // Let native toolbar buttons handle Enter and Space themselves.
+    if (event.target.closest?.('button')
+      && ['Enter', ' '].includes(event.key)) return;
     // calculate a more complete name for this event,
     // then call the keyboard event dispatcher
     const keyName = buildEventName(event);
@@ -772,8 +811,13 @@ export class TreeView extends Tree {
     //debug(`TreeView.mouseEvent(${eventType})`, event);
     // don't try to handle mouse events while a dialog is visible
     if (this.dialogActive) return;
-    if (this.searchCaptureInput) return;
-    if (this.filterCaptureInput) return;
+    if (this.searchCaptureInput || this.filterCaptureInput) {
+      // Clicking a row transfers focus out of the text field; modifier
+      // clicks still need their default link navigation suppressed.
+      if (['mousedown', 'click', 'dblclick'].includes(eventType))
+        this.document.activeElement.blur();
+      else return;
+    }
 
     // stop scrolling if mouse left the tree view
     if ((isFirefox && (! event.relatedTarget))
@@ -781,8 +825,8 @@ export class TreeView extends Tree {
       this.dragScrollSpeed = 0;
 
     //debug(`mouseEvent(${eventType}):`, event);
-    // ensure nothing gets focused / highlighted
-    this.document.activeElement.blur();
+    // Hovering must not steal keyboard focus from a toolbar button.
+    if ('mousedown' === eventType) this.document.activeElement.blur();
     // assign an event name based on modifier keys, event type, mouse button
     const eventName = buildEventName(event, eventType);
     //this.setStatus(`mouse: ${eventName}`);
@@ -850,6 +894,23 @@ export class TreeView extends Tree {
     this.$mouseRowHgt = rowHgt;
     //debug(`mouseEvent(): rowXY(${rowX},${rowY}) rowWidHgt(${rowWid}x${rowHgt})`);
 
+    // Modified clicks select rows without opening links or changing branches.
+    if (event.button === 0 && (event.shiftKey || event.metaKey)
+      && ['mousedown', 'click', 'dblclick'].includes(eventType)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (eventType === 'click' && $row && node) {
+        const unlock = await this.keyEventMutex.lock();
+        try {
+          if (event.metaKey) {
+            await node.setMarked(! node.marked, { reason: 'userAction', individual: true });
+            await this.setCursor(node, { instant: true });
+          } else await this.selectRangeTo(node);
+        } finally { unlock(); }
+      }
+      return;
+    }
+
     // call a handler
     const handlerName = mouseBindings[eventName];
     if (handlerName) {
@@ -886,6 +947,104 @@ export class TreeView extends Tree {
   action_rejectEvent (event) {  // block browser's default handler
     event.preventDefault();
     event.stopPropagation();
+  }
+
+  visibleSelectionNodes () {
+    // DOM order also respects flattened branches and CSS-only filters.
+    return Array.from(this.$treeRoot.querySelectorAll('.row'))
+      .filter(row => row.getClientRects().length > 0)
+      .map(row => this.nodes[row.parentNode.id.slice(4)])
+      .filter(node => node && ! node.isRoot());
+  }
+
+  scheduleSelectionHighlight () {
+    if (this.isInert || this.selectionHighlightFrame) return;
+    // Wait until row insertion, removal, and filtering have finished.
+    this.selectionHighlightFrame = this.window.requestAnimationFrame(() => {
+      this.selectionHighlightFrame = null;
+      this.renderSelectionHighlight();
+    });
+  }
+
+  renderSelectionHighlight () {
+    if (! this.$selectionLayer) {
+      this.$selectionLayer = this.document.createElement('li');
+      this.$selectionLayer.className = 'selection-highlights';
+      this.$selectionLayer.setAttribute('aria-hidden', 'true');
+    }
+    // Keep the layer after the tree node, which whole-tree renders replace.
+    if (! this.$treeRoot.contains(this.$selectionLayer))
+      this.$treeRoot.appendChild(this.$selectionLayer);
+    const origin = this.$selectionLayer.getBoundingClientRect();
+    const zoom = parseFloat(this.window.getComputedStyle(this.document.documentElement).zoom) || 1;
+    const ranges = [];
+    let range;
+    for (const node of this.visibleSelectionNodes()) {
+      if (! node.marked) { range = null; continue; }
+      const rect = node.$row.getBoundingClientRect();
+      if (! range) {
+        range = { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+        ranges.push(range);
+      } else {
+        range.left = Math.min(range.left, rect.left);
+        range.right = Math.max(range.right, rect.right);
+        range.bottom = rect.bottom;
+      }
+    }
+    // One rectangle per consecutive range covers indentation and branch gaps
+    // without changing row hit targets, layout, or the tree's indentation.
+    const fragments = this.document.createDocumentFragment();
+    for (const range of ranges) {
+      const highlight = this.document.createElement('div');
+      highlight.className = 'selection-highlight';
+      Object.assign(highlight.style, {
+        left: `${(range.left - origin.left) / zoom}px`,
+        top: `${(range.top - origin.top) / zoom}px`,
+        width: `${(range.right - range.left) / zoom}px`,
+        height: `${(range.bottom - range.top) / zoom}px`
+      });
+      fragments.appendChild(highlight);
+    }
+    this.$selectionLayer.replaceChildren(fragments);
+  }
+
+  async selectRangeTo (node) {
+    const visible = this.visibleSelectionNodes();
+    const end = visible.indexOf(node);
+    if (end < 0) return;
+    let anchor = this.selectionAnchor || this.cursor || node;
+    if (! visible.includes(anchor)) anchor = node;
+    if (! this.rangeSelection || this.rangeSelection.anchor !== anchor) {
+      this.rangeSelection = {
+        anchor, marked: ! anchor.marked, before: new Map(), range: new Set()
+      };
+    }
+    this.selectionAnchor = anchor;
+    const selection = this.rangeSelection;
+    const start = visible.indexOf(anchor);
+    // Returning to the anchor cancels this range, including its starting row.
+    const range = new Set(start === end ? []
+      : visible.slice(Math.min(start, end), Math.max(start, end) + 1));
+    // Restore rows that leave the range when the user reverses direction.
+    for (const previous of selection.range) {
+      if (! range.has(previous) && this.nodes[previous.id] === previous)
+        await previous.setMarked(selection.before.get(previous), { reason: 'userAction', individual: true });
+    }
+    for (const current of range) {
+      if (! selection.before.has(current)) selection.before.set(current, current.marked);
+      await current.setMarked(selection.marked, { reason: 'userAction', individual: true });
+    }
+    selection.range = range;
+    await this.setCursor(node, { instant: true, preserveSelection: true });
+  }
+
+  async action_selectAdjacent (event) {
+    const visible = this.visibleSelectionNodes();
+    if (! visible.length) return;
+    const index = visible.indexOf(this.cursor);
+    const step = ['ArrowUp', 'ArrowLeft'].includes(event.key) ? -1 : 1;
+    const next = index < 0 ? 0 : Math.max(0, Math.min(visible.length - 1, index + step));
+    await this.selectRangeTo(visible[next]);
   }
 
   async action_cursorUp (event) {
@@ -961,9 +1120,9 @@ export class TreeView extends Tree {
   }
 
   async cursorNodeMoveTo(destParent, destIndex, direction) {
-    const moved = await this.cursor.moveTo(
-      destParent, destIndex,
-      { reason: 'userAction' });
+    const node = this.cursor;
+    const moved = await this.withMoveHistory(`move ${direction}`, () => node.moveTo(
+      destParent, destIndex, { reason: 'userAction' }));
     if (moved) this.setStatus(`moved ${direction}: ${this.cursor.toLine()}`);
     return moved;
   }
@@ -1800,6 +1959,8 @@ export class TreeView extends Tree {
   }
 
   action_toggleMarked (event) {
+    this.rangeSelection = null;
+    this.selectionAnchor = null;
     debug('action_toggleMarked()');
     // choose mouse or keyboard cursor based on event type
     let cursor = this.whichCursor(event);
@@ -1812,6 +1973,8 @@ export class TreeView extends Tree {
   }
 
   async action_unmarkAll (event) {
+    this.rangeSelection = null;
+    this.selectionAnchor = null;
     debug('action_unmarkAll()');
     await this.unmarkAll({ reason: 'userAction' });
     this.setStatus(`Unmarked all nodes`);
@@ -1860,23 +2023,21 @@ export class TreeView extends Tree {
     let numMoved = 0;
     let numFailed = 0;
     let moved = false;
-    for (const nodeId of this.markedNodes) {
-      const node = this.nodes[nodeId];
-      // special case: moving from/to same parent can get weird
-      const pastingToSameParent = (node.parent === destParent);
-      const oldIndex = node.indexOf();
-      // move the node
-      moved = await node.moveTo(destParent, destIndex, { reason: 'userAction' });
-      if (moved) numMoved ++;
-      else numFailed ++;
-      // adjust if special case was triggered
-      if (pastingToSameParent) {
-        if (oldIndex < destIndex)
-          destIndex --;
+    // A range can select both a parent and its children. Move each branch once.
+    const toMove = this.markedNodes.map(id => this.nodes[id])
+      .filter(node => node && ! node.findParent(parent => parent.marked));
+    await this.withMoveHistory('move selected nodes', async () => {
+      for (const node of toMove) {
+        // special case: moving from/to same parent can get weird
+        const pastingToSameParent = (node.parent === destParent);
+        const oldIndex = node.indexOf();
+        moved = await node.moveTo(destParent, destIndex, { reason: 'userAction' });
+        if (moved) numMoved ++;
+        else numFailed ++;
+        if (pastingToSameParent && oldIndex < destIndex) destIndex --;
+        destIndex ++;
       }
-      // next paste goes at next slot
-      destIndex ++;
-    }
+    });
     if (numFailed > 0)
       this.setStatus(`Moved ${numMoved} nodes, ${numFailed} failed`);
     else this.setStatus(`Moved ${numMoved} nodes`);
@@ -2198,9 +2359,8 @@ export class TreeView extends Tree {
       if (wasCursor && (drop.destParent.isCollapsed()))
         this.setCursor(drop.destParent);
       // move it
-      const moved = await drop.sourceNode.moveTo(
-        drop.destParent, drop.destIndex,
-        { reason: 'userAction' });
+      const moved = await this.withMoveHistory('drag node', () => drop.sourceNode.moveTo(
+        drop.destParent, drop.destIndex, { reason: 'userAction' }));
       if (moved) return finish(`moved node: ${drop.sourceNode.toLine()}`);
       else {
         // undo cursor change if move failed
@@ -2424,6 +2584,11 @@ export class TreeView extends Tree {
   }
 
   async setCursor (node, args) {
+    if (! node) return;
+    if (! args?.preserveSelection) {
+      this.rangeSelection = null;
+      this.selectionAnchor = node;
+    }
     // { instant: false, scrollDelay: 0, expand: false}) {
     //debug(`TreeView.setCursor(): ${node.toLine()}`);
     // ensure cursor is on a visible node in our view scope
@@ -2742,7 +2907,7 @@ export class TreeView extends Tree {
     this.$zoomInBtn.addEventListener('click', () => {
       this.onZoomBtn(1);
     });
-    // flatten-lone-child toggle (shown in place of the zoom buttons)
+    // bottom-bar flatten-lone-child toggle
     if (this.$flattenLoneChildBtn) {
       this.$flattenLoneChildBtn.addEventListener('click', () => {
         this.onFlattenLoneChildBtnClick();
@@ -2754,6 +2919,9 @@ export class TreeView extends Tree {
         this.onDupBtnClick();
       });
     }
+    this.$locateTabBtn?.addEventListener('click', () => {
+      this.action_locateCurrentTab();
+    });
     // when details-btn clicked, toggle the details box
     this.$detailsBtn.addEventListener('click', () => {
       this.onDetailsBtnClick();
@@ -2778,12 +2946,93 @@ export class TreeView extends Tree {
     this.$markedCount.addEventListener('mouseover', () => {
       this.onMarkedCountHover();
     });
-    this.$markedCount.addEventListener('click', () => {
-      this.onMarkedCountClick();
+    this.$markedCount.addEventListener('click', event => {
+      this.onMarkedCountClick(event);
+    });
+    this.$clearMarkedBtn?.addEventListener('click', event => {
+      this.runButtonAction('unmarkAll', event);
     });
   }
 
+  async runButtonAction (action, event) {
+    const unlock = await this.keyEventMutex.lock();
+    try { await this[`action_${action}`](event); }
+    finally { unlock(); }
+  }
+
   // ---- undo / redo ------------------------------------------------------
+
+  captureMovePosition (node) {
+    const parent = node.parent;
+    if (! parent) return null;
+    const index = node.indexOf();
+    return {
+      parentId: parent.id, index,
+      previousId: parent.nodes[index - 1]?.id,
+      nextId: parent.nodes[index + 1]?.id
+    };
+  }
+
+  async withMoveHistory (label, operation) {
+    const unlock = await this.historyMutex.lock();
+    const moves = [];
+    this.moveHistoryTransaction = moves;
+    try { return await operation(); }
+    finally {
+      this.moveHistoryTransaction = null;
+      // Even a partially failed operation can have moved some nodes.
+      if (moves.length) this.pushUndo(this.makeMoveHistory(label, moves));
+      unlock();
+    }
+  }
+
+  makeMoveHistory (label, moves) {
+    // Retain only moves which were successfully replayed. Redo must not
+    // move a node whose undo was skipped because its old parent was gone.
+    let remaining = moves;
+    const replay = async undo => {
+      const successful = new Set();
+      let skipped = 0;
+      const ordered = undo ? remaining.slice().reverse() : remaining;
+      for (const move of ordered) {
+        const node = this.nodes[move.nodeId];
+        const position = undo ? move.before : move.after;
+        const parent = this.nodes[position.parentId];
+        // Never revive deleted nodes or let moveTo promote children to
+        // repair a cycle caused by subsequent edits to the tree.
+        if (! node || ! parent || node.isRoot()
+          || parent === node || node.isParentOf(parent)) {
+          skipped ++;
+          continue;
+        }
+        // Prefer surviving neighbors over an index that may now be stale.
+        const siblings = parent.nodes.filter(sibling => sibling !== node);
+        const next = siblings.findIndex(sibling => sibling.id === position.nextId);
+        const previous = siblings.findIndex(sibling => sibling.id === position.previousId);
+        let index = next >= 0 ? next : previous >= 0 ? previous + 1
+          : Math.min(position.index, siblings.length);
+        if (node.parent === parent && node.indexOf() === index) {
+          successful.add(move);
+          continue;
+        }
+        // moveTo expects an insertion index before removing the source.
+        if (node.parent === parent && node.indexOf() < index) index ++;
+        try {
+          if (await node.moveTo(parent, index, { reason: 'userAction' }))
+            successful.add(move);
+          else skipped ++;
+        } catch (err) {
+          warn('Skipping unavailable move during history replay', move.nodeId, err);
+          skipped ++;
+        }
+      }
+      remaining = remaining.filter(move => successful.has(move));
+      return `${undo ? 'Undid' : 'Redid'} ${successful.size} moves`
+        + (skipped ? `; skipped ${skipped} unavailable moves (tree changed)` : '');
+    };
+    return { label, undo: () => replay(true), redo: () => replay(false),
+      canReplay: () => remaining.length > 0 };
+  }
 
   pushUndo (entry) {
     // entry: { label, undo: async () => {}, redo: async () => {} }
@@ -2800,27 +3049,32 @@ export class TreeView extends Tree {
       this.$redoBtn.classList.toggle('greyed-out', this.redoStack.length === 0);
   }
 
-  onUndoBtnClick () { return this.action_undo({ type: 'click' }); }
-  onRedoBtnClick () { return this.action_redo({ type: 'click' }); }
+  onUndoBtnClick () { return this.runButtonAction('undo', { type: 'click' }); }
+  onRedoBtnClick () { return this.runButtonAction('redo', { type: 'click' }); }
 
   async action_undo (event) {
-    const entry = this.undoStack.pop();
-    if (! entry) { this.setStatus('nothing to undo'); return; }
-    // undo() may return a status note (e.g. when it relocated the node);
-    // prefer it over the generic message so it isn't overwritten/lost
-    const note = await entry.undo();
-    this.redoStack.push(entry);
-    this.$renderUndoRedoBtns();
-    this.setStatus(note || `undid: ${entry.label}`);
+    const unlock = await this.historyMutex.lock();
+    try {
+      const entry = this.undoStack.pop();
+      if (! entry) { this.setStatus('nothing to undo'); return; }
+      // Prefer the entry's note when only part of an operation was restored.
+      const note = await entry.undo();
+      if (! entry.canReplay || entry.canReplay()) this.redoStack.push(entry);
+      this.$renderUndoRedoBtns();
+      this.setStatus(note || `undid: ${entry.label}`);
+    } finally { unlock(); }
   }
 
   async action_redo (event) {
-    const entry = this.redoStack.pop();
-    if (! entry) { this.setStatus('nothing to redo'); return; }
-    const note = await entry.redo();
-    this.undoStack.push(entry);
-    this.$renderUndoRedoBtns();
-    this.setStatus(note || `redid: ${entry.label}`);
+    const unlock = await this.historyMutex.lock();
+    try {
+      const entry = this.redoStack.pop();
+      if (! entry) { this.setStatus('nothing to redo'); return; }
+      const note = await entry.redo();
+      if (! entry.canReplay || entry.canReplay()) this.undoStack.push(entry);
+      this.$renderUndoRedoBtns();
+      this.setStatus(note || `redid: ${entry.label}`);
+    } finally { unlock(); }
   }
 
   async action_flattenNode (event) {
@@ -2838,24 +3092,13 @@ export class TreeView extends Tree {
     if (cursor !== this.cursor) await this.setCursor(cursor);
 
     const line = cursor.toLine();
-    const target = cursor;
-    // flatten() returns the data needed to put everything back
-    let original = await target.flatten({ reason: 'userAction' });
+    const original = await this.withMoveHistory(`flatten ${line}`,
+      () => cursor.flatten({ reason: 'userAction' }));
     if (! original) {
       this.setStatus('nothing to flatten');
       return;
     }
     const count = original.length;
-    // make the action undoable (and redoable) via the shared undo/redo stack
-    this.pushUndo({
-      label: `flatten ${line}`,
-      undo: async () => {
-        await target.restoreFlatten(original, { reason: 'userAction' });
-      },
-      redo: async () => {
-        original = await target.flatten({ reason: 'userAction' });
-      },
-    });
     this.setStatus(`flattened ${count} nodes under ${line}`);
   }
 
@@ -3093,15 +3336,11 @@ export class TreeView extends Tree {
     }
   }
 
-  // show either the zoom "+/-" buttons or the "flatten lone child" toggle,
-  // depending on the hideZoomButtons option
+  // Show or hide the top-bar zoom controls.
   $renderZoomButtons () {
     const hide = !! this.cfg.hideZoomButtons;
     if (this.$zoomOutBtn) this.$zoomOutBtn.classList.toggle('hidden', hide);
     if (this.$zoomInBtn) this.$zoomInBtn.classList.toggle('hidden', hide);
-    // the flatten toggle takes their place when the zoom buttons are hidden
-    if (this.$flattenLoneChildBtn)
-      this.$flattenLoneChildBtn.classList.toggle('hidden', ! hide);
   }
 
   // reflect the flattenLoneChild state on the toggle button (pressed = on)
@@ -3118,6 +3357,51 @@ export class TreeView extends Tree {
     this.cfg.set('flattenLoneChild', newVal);
     this.$renderFlattenLoneChildBtn();
     this.setStatus(`Flatten lone child: ${newVal ? 'on' : 'off'}`);
+  }
+
+  async action_locateCurrentTab () {
+    await this.treeViewLoaded;
+    const [tab] = await api.tabs.query({ active: true, windowId: this.windowId });
+    const node = tab && this.getNodeByTabId(tab.id);
+    if (! node) {
+      this.setStatus('Current tab is not in the tree yet');
+      return;
+    }
+    // Filters must not hide the row the user explicitly asked to locate.
+    if (this.dupViewActive) await this.disableDupView();
+    if (this.filterViewActive) await this.disableFilterView();
+    await this.expandOverride(node, true);
+    await this.setCursor(node, { instant: true });
+    this.setStatus(`Located ${node.toLine()}`);
+  }
+
+  // Coalesce URL and tree mutations, including those initiated in this view.
+  scheduleDuplicateRefresh () {
+    if (this.isInert) return;
+    clearTimeout(this.duplicateRefreshTimer);
+    this.duplicateRefreshTimer = setTimeout(() => {
+      this.refreshDuplicates().catch(err => error('Duplicate refresh failed', err));
+    }, 50);
+  }
+
+  async refreshDuplicates () {
+    await this.treeViewLoaded;
+    const dups = this.markDupNodes();
+    if (! this.dupViewActive) return;
+    // Remove overrides for rows which stopped being duplicates or were deleted.
+    const retained = [];
+    for (const node of this.dupExpandOverrides) {
+      if (this.nodes[node.id] !== node) delete this.expandOverrides[node.id];
+      else if (! node.dupMatch) await this.expandOverride(node, null);
+      else retained.push(node);
+    }
+    this.dupExpandOverrides = retained;
+    this.$renderWholeTree();
+    for (const node of dups) {
+      if (this.expandOverrides[node.id] || node.isVisible(this.viewRoot)) continue;
+      await this.expandOverride(node, true);
+      this.dupExpandOverrides.push(node);
+    }
   }
 
   // ---- duplicate view ----------------------------------------------------
@@ -3202,10 +3486,13 @@ export class TreeView extends Tree {
       group.push({ node, params });
     }
     const dups = [];
+    let extraCopies = 0;
     for (const group of byBase.values()) {
       if (group.length < 2) continue;
       for (const cluster of this.dupQueryClusters(group)) {
         if (cluster.length < 2) continue;
+        // The badge counts copies beyond the first in each matching group.
+        extraCopies += cluster.length - 1;
         for (const { node } of cluster) {
           node.dupMatch = true;
           dups.push(node);
@@ -3219,6 +3506,8 @@ export class TreeView extends Tree {
         }
       }
     }
+    this.duplicateCount = extraCopies;
+    this.$renderDupBtn();
     return dups;
   }
 
@@ -3295,6 +3584,23 @@ export class TreeView extends Tree {
   $renderDupBtn () {
     if (! this.$dupBtn) return;
     this.$dupBtn.classList.toggle('pressed', !! this.dupViewActive);
+    const count = this.duplicateCount;
+    this.$dupBtn.title = count ? `${count} extra ${count === 1 ? 'copy' : 'copies'} across the session` : 'No duplicate nodes';
+    if (this.$dupCount) {
+      this.$dupCount.textContent = count ? String(count) : '';
+      this.positionDuplicateBadge();
+    }
+  }
+
+  positionDuplicateBadge () {
+    if (! this.$dupCount || ! this.$dupBtn) return;
+    const visible = this.duplicateCount > 0 && this.$dupBtn.getClientRects().length > 0;
+    this.$dupCount.classList.toggle('hidden', ! visible);
+    if (! visible) return;
+    const rect = this.$dupBtn.getBoundingClientRect();
+    const zoom = parseFloat(this.window.getComputedStyle(this.document.documentElement).zoom) || 1;
+    this.$dupCount.style.left = `${Math.max(rect.left / zoom, this.$dupCount.offsetWidth * 0.4)}px`;
+    this.$dupCount.style.top = `${Math.max(rect.top / zoom, this.$dupCount.offsetHeight * 0.2)}px`;
   }
 
   onBackupBtnClick () {
@@ -3559,16 +3865,21 @@ export const keyBindings = {
   'PageDown': 'cursorPgDown',
   'Home': 'cursorHome',
   'End': 'cursorEnd',
+  ///// select consecutive visible rows
+  'Shift+ArrowUp': 'selectAdjacent',
+  'Shift+ArrowDown': 'selectAdjacent',
+  'Shift+ArrowLeft': 'selectAdjacent',
+  'Shift+ArrowRight': 'selectAdjacent',
   ///// move current node
   // move by one visible row, period
-  'Shift+ArrowUp': 'moveNodeUp',
-  'Shift+ArrowDown': 'moveNodeDown',
+  'Shift+Meta+ArrowUp': 'moveNodeUp',
+  'Shift+Meta+ArrowDown': 'moveNodeDown',
   // move by one sibling, never going to a deeper level (but maybe higher)
   'Shift+PageUp': 'moveNodeUpNoDescend',
   'Shift+PageDown': 'moveNodeDownNoDescend',
   // move shallower or deeper
-  'Shift+ArrowLeft': 'moveNodeLeft',
-  'Shift+ArrowRight': 'moveNodeRight',
+  'Shift+Meta+ArrowLeft': 'moveNodeLeft',
+  'Shift+Meta+ArrowRight': 'moveNodeRight',
   // move to first / last position
   // TODO: implement these
   'Shift+Home': 'moveNodeHome',
@@ -3613,4 +3924,3 @@ export const mouseBindings = {
   // allow right click to open normal context menu
   'MousePressRight': 'none',
 };
-

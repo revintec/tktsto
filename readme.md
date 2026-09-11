@@ -239,8 +239,17 @@ include...
 - `u`: unload the highlighted node
 - `Enter`: load the highlighted node
 - `Up` / `Down`: move the cursor
-- `Shift+Up` / `Shift+Down`: move the node the cursor is on
+- `Shift+Arrows`: select/unselect consecutive visible nodes (reverse direction to shrink the range; returning to the starting node cancels the range)
+- `Shift+click`: select/unselect a range from the cursor; starting on a marked node clears the range
+- `Cmd+click`: toggle an individual node
+- `Cmd+Shift+Arrows`: move the node the cursor is on
 - `Space`: expand/collapse the highlighted node
+
+The broom beside the selected-node count clears the selection. Click the count
+with the insert-into-list icon to move selected branches to the cursor. Keyboard moves,
+drag-and-drop, moving a selection, and flattening each create one Undo/Redo entry.
+If the tree changes, Undo/Redo restores the surviving moves where possible and
+reports any skipped moves whose nodes or destinations are no longer available.
 
 So in your extension hotkeys, I'd recommend assigning them like this:
 
@@ -250,7 +259,8 @@ So in your extension hotkeys, I'd recommend assigning them like this:
 - `Alt+Shift+Up` / `Alt+Shift+Down`: move the node the cursor is on
 - `Alt+Space`: expand/collapse the highlighted node
 
-Just take the regular key and add "Alt".  Do this for every function you think
+The node movement shortcuts above are independent of the sidebar's selection
+shortcuts. For other functions, take the regular key and add "Alt". Do this for every function you think
 you'll want to use during normal browsing without having to focus the sidepanel
 first.
 
@@ -645,5 +655,3 @@ Installing the extension from source or from web extension stores:
 - Firefox: https://toykeeper.net/tktsto/firefox
 - Edge: https://toykeeper.net/tktsto/edge
 - Safari (TBD): https://toykeeper.net/tktsto/safari
-
-

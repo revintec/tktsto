@@ -13,8 +13,10 @@
     <link rel="stylesheet" type="text/css" href="./sidepanel.css"/>
   </head>
   <body id="body" class="unfocused">
+    <div id="sidebar-content">
     <div id="top-area">
       <div id="top-bar" class="toolbar">
+        <div id="top-primary">
         <div id="view-scope-btn" class="button">
           Session
         </div>
@@ -33,11 +35,27 @@
         <div id="zoom-in-btn" class="button">
           +
         </div>
-        <div id="flatten-lone-child-btn" class="button hidden">
-          Flat
         </div>
-        <div id="dup-btn" class="button">
-          Dup
+        <div id="top-tools">
+        <button id="options-btn" class="button" type="button"
+          title="Options" aria-label="Options">
+          <!-- Lucide Settings icon; see /LICENSE.Lucide. -->
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </button>
+        <button id="help-btn" class="button hidden" type="button">Help</button>
+        <button id="locate-tab-btn" class="button" type="button"
+          title="Locate current tab" aria-label="Locate current tab">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none"
+            stroke="currentColor" stroke-width="1.8">
+            <circle cx="12" cy="12" r="7"/>
+            <circle cx="12" cy="12" r="2"/>
+            <path d="M12 1v5m0 12v5M1 12h5m12 0h5"/>
+          </svg>
+        </button>
         </div>
       </div>
       <div id="search-bar" class="search-bar toolbar hidden">
@@ -46,7 +64,29 @@
       </div>
       <div id="notifications">
         <div id="search-count" class="search-count hidden"></div>
-        <div id="marked-count" class="marked-count hidden"></div>
+        <span id="marked-actions" class="hidden">
+          <button id="clear-marked-btn" type="button" title="Clear selection"
+            aria-label="Clear selection">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m20 3-8 8m-2-2 5 5-5 7-8-8 8-4Z"/>
+              <path d="m5 12 7 7m-5-5-3 2m5 0-2 3"/>
+            </svg>
+          </button>
+          <button id="marked-count" class="marked-count hidden" type="button"
+            title="Place selected nodes at the cursor" aria-label="Place selected nodes at the cursor">
+            <!-- Lucide ListEnd icon; see /LICENSE.Lucide. -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 5H3"/>
+              <path d="M16 12H3"/>
+              <path d="M9 19H3"/>
+              <path d="m16 16-3 3 3 3"/>
+              <path d="M21 5v12a2 2 0 0 1-2 2h-6"/>
+            </svg>
+            <span id="marked-count-value"></span>
+          </button>
+        </span>
       </div>
     </div>
     <div id="tree-view">
@@ -65,17 +105,17 @@
         <div id="details-btn" class="button">
           Details
         </div>
-        <div id="backup-btn" class="button">
-          Backup
-        </div>
-        <div id="options-btn" class="button">
-          Options
+        <div id="flatten-lone-child-btn" class="button">
+          Flat
         </div>
         <div id="filter-btn" class="button">
           Filter
         </div>
-        <div id="help-btn" class="button">
-          Help
+        <div id="dup-btn" class="button">
+          Dup
+        </div>
+        <div id="backup-btn" class="button">
+          Backup
         </div>
         <!--<div id="reddit-btn" class="button">
           Support forum over on reddit, /r/TKTSTO or something like that
@@ -89,6 +129,7 @@
       </div>
     </div>
     <img id="drag-arrow" src="/img/drag-arrow.png" style="display: none;" />
+    </div>
+    <span id="dup-count" class="hidden" aria-live="polite"></span>
   </body>
 </html>
-

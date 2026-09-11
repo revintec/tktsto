@@ -1,0 +1,193 @@
+#sidebar-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Compact, consistent controls with utility actions aligned to the right. */
+#top-area, #bottom-area {
+  container-type: inline-size;
+}
+
+#top-bar, #bottom-bar {
+  box-sizing: border-box;
+  width: 100%;
+  gap: 4px;
+}
+
+.toolbar .button {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 1.9rem;
+  margin: 0;
+  padding: 0.15rem 0.2rem;
+  border-radius: 0.4rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+#top-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: start;
+}
+
+#top-tools {
+  display: flex;
+  gap: 4px;
+}
+
+#top-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.75fr) repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+
+#top-primary:has(#zoom-in-btn:not(.hidden)) {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.75fr) repeat(2, minmax(0, 1fr)) repeat(2, 1.8rem);
+}
+
+#top-tools .button {
+  flex: none;
+}
+
+#options-btn, #locate-tab-btn {
+  width: 1.9rem;
+}
+
+#top-tools svg {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+@container (max-width: 24rem) {
+  #top-bar:has(#zoom-in-btn:not(.hidden)) { grid-template-columns: minmax(0, 1fr); }
+  #top-bar:has(#zoom-in-btn:not(.hidden)) #top-tools { grid-row: 1; justify-self: end; }
+  #top-bar:has(#zoom-in-btn:not(.hidden)) #top-primary { grid-row: 2; }
+}
+
+#bottom-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.8fr) minmax(0, 1.2fr);
+}
+
+@container (max-width: 15rem) {
+  #top-bar { grid-template-columns: minmax(0, 1fr); }
+  #top-tools { grid-row: 1; justify-self: end; }
+  #top-primary { grid-row: 2; }
+  #top-primary:has(#zoom-in-btn:not(.hidden)) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #bottom-bar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #backup-btn { grid-column: 2 / 4; }
+}
+
+#dup-btn {
+  position: relative;
+}
+
+#marked-actions {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0.3rem;
+}
+
+#marked-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25em;
+  cursor: pointer;
+  font-family: inherit;
+  border: none;
+}
+
+#clear-marked-btn {
+  padding: 0.15em 0.35em;
+  border-radius: var(--cursor-branch-radius);
+  color: var(--button-fg);
+  background: var(--button-bg);
+  box-shadow: var(--button-shadow);
+  font-size: 133%;
+}
+
+#clear-marked-btn:hover {
+  color: var(--button-hover-fg);
+  background: var(--button-hover-bg);
+}
+
+#marked-actions svg {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+
+#marked-actions #marked-count {
+  color: var(--button-fg);
+}
+
+#dup-count {
+  /* Outside the filtered content so its red stays red without focus. */
+  position: fixed;
+  z-index: 3;
+  transform: translate(-40%, -20%);
+  min-width: 1.25em;
+  padding: 0.1em 0.25em;
+  border-radius: 999px;
+  background: #d92336;
+  color: #fff;
+  font: bold 0.7rem/1.25 sans-serif;
+  text-shadow: none;
+  pointer-events: none;
+}
+
+/* Focus belongs to this document, not just to its containing Chrome window. */
+body.unfocused > :not(#dup-count) {
+  filter: grayscale(0.9);
+}
+
+body.unfocused .node-favicon {
+  filter: grayscale(1) brightness(0.65);
+}
+
+/* Draw selections in one shared coordinate space, across tree indentation. */
+#tree-root {
+  position: relative;
+}
+
+.selection-highlights {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  list-style: none;
+  pointer-events: none;
+}
+
+.selection-highlight {
+  position: absolute;
+  box-sizing: border-box;
+  border: var(--marked-row-outline);
+  border-radius: 0;
+  background: var(--marked-node-bg);
+}
+
+#hover-menu {
+  z-index: 2;
+}
+
+#tree-view .node.marked {
+  box-shadow: none;
+  background: none;
+  border-radius: 0;
+  border-color: transparent;
+}
+
+#tree-view .row.marked {
+  outline: none;
+  box-shadow: none;
+  border-radius: 0;
+}

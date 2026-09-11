@@ -1719,7 +1719,7 @@ export class Node {
     //if (this.isWindow()) return;
     //if (this.isWindow() && this.isLoaded()) return;
 
-    if (marked) {
+    if (marked && ! args.individual) {
       // reject mark request if ancestor is already marked,
       // because that means we're already marked by association
       const markedParent = this.findParent((n) => n.marked);
@@ -1746,6 +1746,7 @@ export class Node {
     if ('userAction' === args.reason)
       await emit('tree_nodeChanged',
         { nodeId: this.id, type: 'setMarked', marked: this.marked,
+          individual: !! args.individual,
           when: when });
 
     return true;
@@ -2150,4 +2151,3 @@ export class Node {
   }
 
 }  // end class Node
-
