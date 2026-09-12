@@ -1229,8 +1229,8 @@ foo {
   display: block;
 }
 
-.dialog *:focus,
-*:focus,
+.dialog *:focus-visible,
+*:focus-visible,
 .focus {
   outline: var(--focus-outline);
 }
@@ -1394,4 +1394,3 @@ select {
   --scrollbar-thumb-bg: linear-gradient(var(--cursor-bg-top), var(--cursor-bg-bot));
   --scrollbar-thumb-bg-unfocused: var(--scrollbar-thumb-bg);
 }
-

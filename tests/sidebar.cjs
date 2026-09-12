@@ -144,6 +144,21 @@ const server = http.createServer(async (req, res) => {
     assert.deepEqual(await page.evaluate(() => openedPages), ['/options/options.html']);
     await page.evaluate(() => { tree.openInternalPage = originalOpenInternalPage; });
 
+    for (const theme of ['tk-day', 'tk-night']) {
+      await page.locator('#theme-variant').evaluate((el, theme) => { el.href = `/themes/${theme}.css`; }, theme);
+      await page.waitForFunction(theme => Array.from(document.styleSheets).some(sheet => sheet.href?.endsWith(`${theme}.css`)), theme);
+      await page.locator('#nodeb > .row .node-link').click(); await settle();
+      assert.equal(await page.locator('#nodeb > .row .node-link').evaluate(el => document.activeElement === el), true);
+      assert.equal(await page.locator('#nodeb > .row .node-link').evaluate(el => getComputedStyle(el).outlineStyle), 'none', 'Mouse-focused node links have no text outline');
+      await page.keyboard.press('Shift+Tab');
+      assert.deepEqual(await page.locator('#nodea > .row .node-link').evaluate(el => ({
+        focused: document.activeElement === el,
+        visible: el.matches(':focus-visible'),
+        style: getComputedStyle(el).outlineStyle,
+        width: getComputedStyle(el).outlineWidth
+      })), { focused: true, visible: true, style: 'inset', width: '4px' }, 'Keyboard navigation preserves the focus outline');
+    }
+
     assert.equal(await page.locator('#dup-count').textContent(), '1');
     await page.evaluate(async () => {
       await tree.windowNode.addChild(0, { id: 'thirdcopy', url: tree.nodes.a.url, render: true }, { reason: 'tree_nodeAdded' });
