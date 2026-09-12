@@ -434,13 +434,17 @@ const server = http.createServer(async (req, res) => {
     await reset('active');
     await page.evaluate(() => tree.nodes.active.setMarked(true, { reason: 'userAction' }));
 
-    // A focus event on an already-open panel must restore full color, and
-    // toolbar hover must not remove native button focus.
+    // Only focus plus a pointer outside the whole panel applies shading.
+    // Hovering tree rows must preserve native toolbar button focus.
     await page.locator('#locate-tab-btn').focus();
     await page.locator('#nodeactive > .row').hover();
     assert.equal(await page.evaluate(() => document.activeElement.id), 'locate-tab-btn');
     assert.equal(await page.locator('#sidebar-content').evaluate(el => getComputedStyle(el).filter), 'none');
     await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    assert.equal(await page.locator('#sidebar-content').evaluate(el => getComputedStyle(el).filter), 'none', 'Unfocused and hovered stays bright');
+    await page.mouse.move(-10, -10);
+    assert.equal(await page.locator('#sidebar-content').evaluate(el => getComputedStyle(el).filter), 'none', 'Unfocused and outside stays bright');
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     assert.equal(await page.locator('#sidebar-content').evaluate(el => getComputedStyle(el).filter), 'grayscale(0.9)');
     assert.equal(await page.locator('#dup-count').evaluate(el => {
       for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
@@ -449,10 +453,56 @@ const server = http.createServer(async (req, res) => {
       return getComputedStyle(el).backgroundColor === 'rgb(217, 35, 54)';
     }), true, 'Dup badge stays red without any ancestor grayscale filter');
     assert.equal(await page.locator('#nodeactive .node-favicon').evaluate(el => getComputedStyle(el).filter), 'grayscale(1) brightness(0.65)');
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.locator('#locate-tab-btn').hover();
     assert.equal(await page.locator('#sidebar-content').evaluate(el => getComputedStyle(el).filter), 'none');
+    assert.equal(await page.locator('#nodeactive .node-favicon').evaluate(el => getComputedStyle(el).filter), 'none');
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => tree.cursor.id === 'active');
+
+    // Exercise all four states for tree shortcuts, native button activation,
+    // focus traversal, and text entry (not just the tree's key dispatcher).
+    const setPanelState = async (focused, inside) => {
+      if (inside) await page.locator('#locate-tab-btn').hover();
+      else await page.mouse.move(-10, -10);
+      await page.evaluate(focused => window.dispatchEvent(new Event(focused ? 'focus' : 'blur')), focused);
+    };
+    await page.evaluate(() => {
+      window.locateClicks = 0;
+      document.getElementById('locate-tab-btn').addEventListener('click', () => locateClicks++);
+    });
+    for (const [focused, inside] of [[false, false], [false, true], [true, false], [true, true]]) {
+      const enabled = focused && inside;
+      await page.evaluate(() => document.activeElement.blur());
+      await reset('a');
+      await setPanelState(focused, inside);
+      await page.keyboard.press('Shift+ArrowDown'); await settle();
+      assert.deepEqual(await marked(), enabled ? ['a', 'b'] : [], `Shortcut gate: focus=${focused}, inside=${inside}`);
+
+      await page.locator('#locate-tab-btn').focus();
+      await setPanelState(focused, inside);
+      const before = await page.evaluate(() => locateClicks);
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Space'); await settle();
+      assert.equal(await page.evaluate(() => locateClicks), before + (enabled ? 2 : 0), 'Native buttons obey the same gate');
+      await page.keyboard.press('Shift+Tab');
+      assert.equal(await page.evaluate(() => document.activeElement.id === 'locate-tab-btn'), !enabled, 'Native focus traversal obeys the gate');
+
+      await page.evaluate(() => {
+        tree.$searchBar.classList.remove('hidden');
+        tree.$searchEntry.value = '';
+        tree.$searchEntry.focus();
+      });
+      await setPanelState(focused, inside);
+      await page.keyboard.type('z');
+      assert.equal(await page.locator('#search-entry').inputValue(), enabled ? 'z' : '', 'Native text entry obeys the gate');
+      await page.evaluate(() => {
+        tree.$searchEntry.blur();
+        tree.$searchEntry.value = '';
+        tree.$searchBar.classList.add('hidden');
+      });
+    }
+    await setPanelState(true, true);
+    await reset('active');
 
     for (const theme of ['tk-night', 'tk-day']) {
       await page.locator('#theme-variant').evaluate((el, theme) => { el.href = `/themes/${theme}.css`; }, theme);
@@ -479,9 +529,9 @@ const server = http.createServer(async (req, res) => {
       if (process.env.SCREENSHOT_DIR) {
         await fs.mkdir(process.env.SCREENSHOT_DIR, { recursive: true });
         await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `${theme}.png`) });
-        await page.evaluate(() => window.dispatchEvent(new Event('blur')));
-        await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `${theme}-unfocused.png`) });
-        await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+        await page.mouse.move(-10, -10);
+        await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `${theme}-pointer-away.png`) });
+        await page.locator('#locate-tab-btn').hover();
       }
     }
     for (const zoom of [0.75, 1.5]) {
@@ -503,7 +553,7 @@ const server = http.createServer(async (req, res) => {
     await page.evaluate(() => { tree.$topBar.classList.remove('hidden'); tree.$bottomBar.classList.remove('hidden'); });
     await page.locator('#dup-count').waitFor({ state: 'visible' });
     assert.deepEqual(errors, [], 'No browser JavaScript errors');
-    console.log('PASS: selection controls, range selection, live Dup count, active-tab reveal, move/drag/flatten undo and redo after tree changes, focus styling, and both theme layouts');
+    console.log('PASS: selection controls, range selection, live Dup count, active-tab reveal, move/drag/flatten undo and redo after tree changes, focus/pointer shading and keyboard gating, and both theme layouts');
   } finally {
     await browser.close();
   }

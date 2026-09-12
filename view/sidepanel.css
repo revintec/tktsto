@@ -131,7 +131,7 @@
 }
 
 #dup-count {
-  /* Outside the filtered content so its red stays red without focus. */
+  /* Outside the filtered content so its red stays red while shaded. */
   position: fixed;
   z-index: 3;
   transform: translate(-40%, -20%);
@@ -145,12 +145,12 @@
   pointer-events: none;
 }
 
-/* Focus belongs to this document, not just to its containing Chrome window. */
-body.unfocused > :not(#dup-count) {
+/* Shade only while this document has focus and the pointer is outside it. */
+body.pointer-away > :not(#dup-count) {
   filter: grayscale(0.9);
 }
 
-body.unfocused .node-favicon {
+body.pointer-away .node-favicon {
   filter: grayscale(1) brightness(0.65);
 }
 

@@ -707,20 +707,44 @@ export class TreeView extends Tree {
   initBodyHandlers () {
     // absolutely NEVER scroll horizontally
     this.$body.addEventListener('scroll', () => { this.$body.scrollLeft = 0; });
-    //
+    // Track the entire panel, including toolbars, blank space, and dialogs.
+    const panel = this.document.documentElement;
+    this.pointerInPanel = panel.matches(':hover');
+    const updateAppearance = () => {
+      this.$body.classList.toggle('unfocused', ! this.panelFocused);
+      this.$body.classList.toggle('pointer-away', this.panelFocused && ! this.pointerInPanel);
+    };
     const updateFocus = () => {
-      this.$body.classList.toggle('unfocused', ! this.document.hasFocus());
+      this.panelFocused = this.document.hasFocus();
+      updateAppearance();
     };
     this.window.addEventListener('focus', updateFocus);
     this.window.addEventListener('blur', () => {
-      this.$body.classList.add('unfocused');
+      this.panelFocused = false;
+      updateAppearance();
     });
     this.document.addEventListener('focusin', updateFocus);
     this.document.addEventListener('focusout', () => queueMicrotask(updateFocus));
+    panel.addEventListener('mouseenter', () => {
+      this.pointerInPanel = true;
+      updateAppearance();
+    });
+    panel.addEventListener('mouseleave', () => {
+      this.pointerInPanel = false;
+      updateAppearance();
+    });
     updateFocus();
   }
 
   initKeyHandler () {
+    // Capture before shortcuts, dialog handlers, and native input/button actions.
+    for (const type of ['keydown', 'keypress', 'keyup']) {
+      this.window.addEventListener(type, event => {
+        if (this.panelFocused && this.document.hasFocus() && this.pointerInPanel) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+    }
     // must wrap it in an anon function to fix scoping issues
     // (calling this.keyHandler unwrapped runs in HtmllDocument scope
     //  instead of Tree scope)
