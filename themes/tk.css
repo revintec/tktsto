@@ -574,6 +574,30 @@ foo {
 .node-checkbox.n8 { color: var(--checkbox-fg-8); }
 .node-checkbox.n9 { color: var(--checkbox-fg-9); }
 
+/* Duplicate count badge, immediately before the favicon. */
+.node-dup-marker {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(0.8 * var(--row-line-height));
+  height: calc(0.8 * var(--row-line-height));
+  padding: 0 0.2rem;
+  margin: 0 0.2rem 0 0;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  vertical-align: text-bottom;
+  color: var(--tree-line-cursor);
+  background: transparent;
+  font: 700 0.7rem/1 sans-serif;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.node-dup-marker:hover {
+  color: var(--button-hover-fg);
+  background: var(--button-hover-bg);
+}
+
 /* favicons */
 .node-favicon {
   display: inline-block;

@@ -23,6 +23,7 @@ export class NodeView extends Node {
     this.$row = null;  // <div> for label, title+url, favicon, etc
     this.$nodes = null;  // <ul>
     this.$favicon = null;  // persistent <img>, reused across re-renders
+    this.$dupMarker = null;  // persistent button for jumping between duplicates
   }
 
   $render () {
@@ -75,13 +76,6 @@ export class NodeView extends Node {
       this.$.classList.remove('marked');
       this.$row.classList.remove('marked');
     }
-
-    // duplicate view marks (visual only, see TreeView.action_toggleDupView):
-    // dup-node = this node's URL appears more than once in the session
-    //            (see TreeView.markDupNodes for what counts as a match),
-    // dup-path = an ancestor shown so its duplicates keep their structure
-    this.$.classList.toggle('dup-node', !! this.dupMatch);
-    this.$.classList.toggle('dup-path', !! this.dupPath);
 
     // filter view marks (visual only, see TreeView.action_toggleFilterView):
     // filter-node = this node's title or url contains the filter text,
@@ -298,6 +292,9 @@ export class NodeView extends Node {
       this.$row.append($noteIcon);
     }
 
+    // Keep the duplicate marker immediately to the left of the favicon.
+    this.$renderDupState();
+
     // favicon (Chromium only)
     // Use the browser's own favicon cache, served from our extension's
     // origin (the _favicon API).  Loading a site's favicon URL directly
@@ -407,6 +404,33 @@ export class NodeView extends Node {
       this.$row.classList.add(...this.rowClasses);
     }
 
+  }
+
+  $renderDupState () {
+    // The marker stays visible in normal view; these classes also drive Dup view.
+    this.$?.classList.toggle('dup-node', !! this.dupMatch);
+    this.$?.classList.toggle('dup-path', !! this.dupPath);
+    if (! this.dupMatch) {
+      this.$dupMarker?.remove();
+      return;
+    }
+    if (! this.$row) return;
+    if (! this.$dupMarker) {
+      const $marker = this.$dupMarker = this.tree.document.createElement('button');
+      $marker.type = 'button';
+      $marker.className = 'node-dup-marker';
+      $marker.draggable = false;
+    }
+    const count = String(this.dupCount);
+    if (this.$dupMarker.textContent !== count) this.$dupMarker.textContent = count;
+    this.$dupMarker.title = `${count} matching tabs — jump to next duplicate`;
+    this.$dupMarker.setAttribute('aria-label', this.$dupMarker.title);
+    if (! this.$row.contains(this.$dupMarker)) {
+      // During a live refresh the title is already rendered; during a full
+      // render the favicon and title will be appended after the marker.
+      const $next = this.$row.querySelector('.node-favicon, .row-title');
+      this.$row.insertBefore(this.$dupMarker, $next);
+    }
   }
 
   $renderDetails ($detailsBox) {

@@ -795,7 +795,7 @@ export class TreeView extends Tree {
       const passThru = this.filterKeyHandler(event);
       if (! passThru) return;
     }
-    // Let native toolbar buttons handle Enter and Space themselves.
+    // Let native buttons handle Enter and Space themselves.
     if (event.target.closest?.('button')
       && ['Enter', ' '].includes(event.key)) return;
     // calculate a more complete name for this event,
@@ -835,6 +835,20 @@ export class TreeView extends Tree {
     //debug(`TreeView.mouseEvent(${eventType})`, event);
     // don't try to handle mouse events while a dialog is visible
     if (this.dialogActive) return;
+    // Marker gestures must not also select, expand, load, or drag the row.
+    const $dupMarker = event.target.closest?.('.node-dup-marker');
+    if ($dupMarker && ['mousedown', 'click', 'dblclick', 'DragStart', 'mouseover'].includes(eventType)) {
+      event.stopPropagation();
+      if (eventType !== 'mousedown') event.preventDefault();
+      this.hideHoverMenu();
+      if (eventType === 'click' && event.button === 0) {
+        const nodeId = $dupMarker.closest('.node').id.slice(4);
+        const unlock = await this.keyEventMutex.lock();
+        try { await this.jumpToNextDuplicate(this.nodes[nodeId]); }
+        finally { unlock(); }
+      }
+      return;
+    }
     if (this.searchCaptureInput || this.filterCaptureInput) {
       // Clicking a row transfers focus out of the text field; modifier
       // clicks still need their default link navigation suppressed.
@@ -3443,6 +3457,31 @@ export class TreeView extends Tree {
     else await this.enableDupView();
   }
 
+  async jumpToNextDuplicate (node) {
+    await this.treeViewLoaded;
+    // Recheck at click time in case a URL, deletion, or move is still debounced.
+    this.markDupNodes();
+    const next = this.nodes[node?.id]?.dupNext;
+    if (! next) {
+      this.setStatus('No other duplicate nodes');
+      return;
+    }
+    if (this.filterViewActive && this.filterString
+      && (! next.isInViewScope() || (! next.filterMatch && ! next.filterPath)))
+      await this.disableFilterView();
+    if (! next.isInViewScope()) {
+      // Show the destination's window without changing the saved view scope.
+      this.viewScope = 'session';
+      this.$renderViewScopeBtn();
+      this.$renderWholeTree();
+      this.registerWithBkgd();
+    }
+    await this.expandOverride(next, true);
+    await this.setCursor(next, { instant: true });
+    next.$dupMarker?.focus({ preventScroll: true });
+    this.setStatus(`Next duplicate: ${next.toLine()}`);
+  }
+
   // duplicate comparison: URLs match when they share a domain and path,
   // ignoring the #fragment entirely.  query strings only tell duplicates
   // apart when they disagree on a key that every candidate has:
@@ -3495,8 +3534,9 @@ export class TreeView extends Tree {
     return clusters;
   }
 
-  // flag duplicated nodes (dupMatch) and their ancestors (dupPath);
-  // NodeView.$render() mirrors the flags onto the elements as CSS classes.
+  // Flag duplicated nodes (dupMatch), their ancestors (dupPath), the total
+  // matches (dupCount), and the next match in tree order (dupNext), wrapping
+  // within each URL cluster.
   // returns the list of duplicated nodes.
   markDupNodes () {
     this.clearDupMarks();
@@ -3515,10 +3555,12 @@ export class TreeView extends Tree {
       if (group.length < 2) continue;
       for (const cluster of this.dupQueryClusters(group)) {
         if (cluster.length < 2) continue;
-        // The badge counts copies beyond the first in each matching group.
+        // The toolbar badge counts copies beyond the first in each group.
         extraCopies += cluster.length - 1;
-        for (const { node } of cluster) {
+        for (const [index, { node }] of cluster.entries()) {
           node.dupMatch = true;
+          node.dupCount = cluster.length;
+          node.dupNext = cluster[(index + 1) % cluster.length].node;
           dups.push(node);
           // keep every ancestor visible, so each duplicate is shown within
           // its original structure
@@ -3531,6 +3573,8 @@ export class TreeView extends Tree {
       }
     }
     this.duplicateCount = extraCopies;
+    this.root.$renderDupState();
+    this.root.forEachRecursive((node) => node.$renderDupState());
     this.$renderDupBtn();
     return dups;
   }
@@ -3538,9 +3582,13 @@ export class TreeView extends Tree {
   clearDupMarks () {
     this.root.dupMatch = false;
     this.root.dupPath = false;
+    this.root.dupCount = 0;
+    this.root.dupNext = null;
     this.root.forEachRecursive((n) => {
       n.dupMatch = false;
       n.dupPath = false;
+      n.dupCount = 0;
+      n.dupNext = null;
     });
   }
 
@@ -3589,7 +3637,7 @@ export class TreeView extends Tree {
     }
     this.dupExpandOverrides = [];
 
-    this.clearDupMarks();
+    this.markDupNodes();
     this.$body.classList.remove('dup-view');
 
     // restore the view scope from before the dup view was opened

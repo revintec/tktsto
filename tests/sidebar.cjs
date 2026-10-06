@@ -151,27 +151,92 @@ const server = http.createServer(async (req, res) => {
       assert.equal(await page.locator('#nodeb > .row .node-link').evaluate(el => document.activeElement === el), true);
       assert.equal(await page.locator('#nodeb > .row .node-link').evaluate(el => getComputedStyle(el).outlineStyle), 'none', 'Mouse-focused node links have no text outline');
       await page.keyboard.press('Shift+Tab');
+      assert.equal(await page.locator('#nodeb > .row .node-dup-marker').evaluate(el => document.activeElement === el && el.matches(':focus-visible')), true, 'Duplicate markers are keyboard accessible');
+      await page.keyboard.press('Shift+Tab');
       assert.deepEqual(await page.locator('#nodea > .row .node-link').evaluate(el => ({
         focused: document.activeElement === el,
         visible: el.matches(':focus-visible'),
         style: getComputedStyle(el).outlineStyle,
         width: getComputedStyle(el).outlineWidth
       })), { focused: true, visible: true, style: 'inset', width: '4px' }, 'Keyboard navigation preserves the focus outline');
+      const marker = await page.locator('#nodea > .row .node-dup-marker').boundingBox();
+      const favicon = await page.locator('#nodea > .row .node-favicon').boundingBox();
+      assert.ok(marker.width > 0 && marker.x + marker.width <= favicon.x, 'Duplicate marker sits to the left of the favicon');
+      assert.equal((await page.locator('#nodea > .row').boundingBox()).height, (await page.locator('#nodeb > .row').boundingBox()).height);
     }
 
     assert.equal(await page.locator('#dup-count').textContent(), '1');
+    assert.equal(await page.locator('.node-dup-marker').count(), 2, 'Only matching rows have markers in normal view');
+    assert.deepEqual(await page.locator('.node-dup-marker').allTextContents(), ['2', '2'], 'Row badges show the total matching tabs, including themselves');
+    assert.equal(await page.locator('#nodea > .row .node-dup-marker').getAttribute('aria-label'), '2 matching tabs — jump to next duplicate');
+    await reset('c');
+    await page.evaluate(() => { window.messages = []; });
+    await page.locator('#nodea > .row .node-dup-marker').click(); await settle();
+    assert.equal(await page.evaluate(() => tree.cursor.id), 'b', 'Clicking the marker jumps to the next matching row');
+    await page.keyboard.press('Enter'); await settle();
+    assert.equal(await page.evaluate(() => tree.cursor.id), 'a', 'Enter wraps to the first duplicate');
+    await page.keyboard.press('Space'); await settle();
+    assert.equal(await page.evaluate(() => tree.cursor.id), 'b', 'Space activates the focused marker');
+    await page.locator('#nodea > .row .node-dup-marker').dblclick(); await settle();
+    await page.locator('#nodea > .row .node-dup-marker').click({ modifiers: ['Shift'] }); await settle();
+    assert.deepEqual(await marked(), [], 'Marker clicks do not select a range');
+    assert.deepEqual(await page.evaluate(() => messages), [], 'Marker gestures do not load tabs or change stored tree data');
+    await page.evaluate(() => { tree.cfg.showFavicons = false; tree.$renderWholeTree(); });
+    assert.equal(await page.locator('.node-favicon').count(), 0);
+    await page.locator('#nodeb > .row .node-dup-marker').click(); await settle();
+    assert.equal(await page.evaluate(() => tree.cursor.id), 'a', 'Markers still work when favicons are disabled');
+    await page.evaluate(() => { tree.cfg.showFavicons = true; tree.$renderWholeTree(); });
+
     await page.evaluate(async () => {
       await tree.windowNode.addChild(0, { id: 'thirdcopy', url: tree.nodes.a.url, render: true }, { reason: 'tree_nodeAdded' });
     });
     await page.waitForFunction(() => tree.duplicateCount === 2);
     assert.equal(await page.locator('#dup-count').textContent(), '2', 'Three matching tabs have two extra copies');
+    assert.deepEqual(await page.locator('.node-dup-marker').allTextContents(), ['3', '3', '3'], 'Every row badge updates when another matching tab is added');
+    await page.locator('#nodeb > .row .node-dup-marker').click(); await settle();
+    assert.equal(await page.evaluate(() => tree.cursor.id), 'thirdcopy', 'Cycling wraps in tree order after adding a duplicate');
+    await page.evaluate(async () => {
+      await tree.nodes.thirdcopy.moveTo(tree.windowNode, tree.nodes.b.indexOf(), { reason: 'tree_nodeMoved' });
+      // Click before the debounced refresh to exercise stale ordering.
+      tree.nodes.a.$dupMarker.click();
+    });
+    await settle();
+    assert.equal(await page.evaluate(() => tree.cursor.id), 'thirdcopy', 'Navigation uses the current order immediately after a move');
     await page.evaluate(() => tree.nodes.thirdcopy.deleteSelf({ reason: 'tree_nodeDeleted' }));
     await page.waitForFunction(() => tree.duplicateCount === 1);
+    assert.deepEqual(await page.locator('.node-dup-marker').allTextContents(), ['2', '2'], 'Row counts decrease when a duplicate is deleted');
     await page.locator('#dup-btn').click();
     await page.waitForFunction(() => tree.dupViewActive);
     await page.locator('#dup-btn').click();
     await page.waitForFunction(() => !tree.dupViewActive);
     assert.equal(await page.locator('#dup-count').isVisible(), true, 'Badge persists after opening Dup');
+    assert.equal(await page.locator('.node-dup-marker').count(), 2, 'Markers persist after leaving Dup view');
+
+    await page.evaluate(async () => {
+      const win = await tree.root.addChild(tree.root.nodes.length,
+        { id: 'other-window', type: 'window', expanded: false, render: true }, { reason: 'tree_nodeAdded' });
+      await win.addChild(0, { id: 'other-copy', url: tree.nodes.a.url, wasLoaded: true, render: true }, { reason: 'tree_nodeAdded' });
+      tree.viewScope = 'window';
+      tree.$renderWholeTree();
+    });
+    await page.locator('#nodeb > .row .node-dup-marker').click(); await settle();
+    assert.equal(await page.evaluate(() => tree.cursor.id), 'other-copy', 'Jump reveals a duplicate in another window');
+    assert.equal(await page.evaluate(() => tree.viewScope), 'session');
+    assert.equal(await page.evaluate(() => tree.nodes['other-window'].expanded), false, 'Hidden matches use temporary expansion');
+    const revealed = await page.locator('#nodeother-copy > .row').boundingBox();
+    const viewport = await page.locator('#tree-view').boundingBox();
+    assert.ok(revealed.y >= viewport.y && revealed.y + revealed.height <= viewport.y + viewport.height, 'Destination is scrolled into view');
+    await page.locator('#nodeother-copy > .row .node-dup-marker').click(); await settle();
+    assert.equal(await page.evaluate(() => tree.cursor.id), 'a', 'Unloaded copies participate in the same cycle');
+    await page.evaluate(() => tree.nodes['other-window'].deleteSelf({ reason: 'tree_nodeDeleted' }));
+    await page.waitForFunction(() => tree.duplicateCount === 1);
+
+    await page.locator('#filter-btn').click();
+    await page.locator('#filter-entry').fill('#one');
+    await page.waitForFunction(() => tree.nodes.a.filterMatch && !tree.nodes.b.filterMatch);
+    await page.locator('#nodea > .row .node-dup-marker').click(); await settle();
+    assert.equal(await page.evaluate(() => tree.cursor.id), 'b', 'Jump reveals a match hidden by the text filter');
+    assert.equal(await page.evaluate(() => tree.filterViewActive), false);
 
     await reset('a');
     await page.keyboard.press('Shift+ArrowDown'); await settle();
@@ -280,6 +345,7 @@ const server = http.createServer(async (req, res) => {
     });
     await page.waitForFunction(() => tree.duplicateCount === 0);
     assert.equal(await page.locator('#dup-count').isVisible(), false);
+    assert.equal(await page.locator('.node-dup-marker').count(), 0, 'URL changes remove markers from both former duplicates');
     await page.evaluate(async () => {
       await tree.windowNode.addChild(0, { id: 'newdup', url: tree.nodes.a.url, render: true }, { reason: 'tree_nodeAdded' });
     });
