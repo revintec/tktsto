@@ -167,8 +167,8 @@ const server = http.createServer(async (req, res) => {
 
     assert.equal(await page.locator('#dup-count').textContent(), '1');
     assert.equal(await page.locator('.node-dup-marker').count(), 2, 'Only matching rows have markers in normal view');
-    assert.deepEqual(await page.locator('.node-dup-marker').allTextContents(), ['2', '2'], 'Row badges show the total matching tabs, including themselves');
-    assert.equal(await page.locator('#nodea > .row .node-dup-marker').getAttribute('aria-label'), '2 matching tabs — jump to next duplicate');
+    assert.deepEqual(await page.locator('.node-dup-marker').allTextContents(), ['1', '1'], 'Row badges count only the other matching tabs');
+    assert.equal(await page.locator('#nodea > .row .node-dup-marker').getAttribute('aria-label'), '1 other matching tab — jump to next duplicate');
     await reset('c');
     await page.evaluate(() => { window.messages = []; });
     await page.locator('#nodea > .row .node-dup-marker').click(); await settle();
@@ -192,7 +192,7 @@ const server = http.createServer(async (req, res) => {
     });
     await page.waitForFunction(() => tree.duplicateCount === 2);
     assert.equal(await page.locator('#dup-count').textContent(), '2', 'Three matching tabs have two extra copies');
-    assert.deepEqual(await page.locator('.node-dup-marker').allTextContents(), ['3', '3', '3'], 'Every row badge updates when another matching tab is added');
+    assert.deepEqual(await page.locator('.node-dup-marker').allTextContents(), ['2', '2', '2'], 'Every row badge updates when another matching tab is added');
     await page.locator('#nodeb > .row .node-dup-marker').click(); await settle();
     assert.equal(await page.evaluate(() => tree.cursor.id), 'thirdcopy', 'Cycling wraps in tree order after adding a duplicate');
     await page.evaluate(async () => {
@@ -204,7 +204,7 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.evaluate(() => tree.cursor.id), 'thirdcopy', 'Navigation uses the current order immediately after a move');
     await page.evaluate(() => tree.nodes.thirdcopy.deleteSelf({ reason: 'tree_nodeDeleted' }));
     await page.waitForFunction(() => tree.duplicateCount === 1);
-    assert.deepEqual(await page.locator('.node-dup-marker').allTextContents(), ['2', '2'], 'Row counts decrease when a duplicate is deleted');
+    assert.deepEqual(await page.locator('.node-dup-marker').allTextContents(), ['1', '1'], 'Row counts decrease when a duplicate is deleted');
     await page.locator('#dup-btn').click();
     await page.waitForFunction(() => tree.dupViewActive);
     await page.locator('#dup-btn').click();

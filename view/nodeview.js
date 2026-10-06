@@ -423,7 +423,7 @@ export class NodeView extends Node {
     }
     const count = String(this.dupCount);
     if (this.$dupMarker.textContent !== count) this.$dupMarker.textContent = count;
-    this.$dupMarker.title = `${count} matching tabs — jump to next duplicate`;
+    this.$dupMarker.title = `${count} other matching ${this.dupCount === 1 ? 'tab' : 'tabs'} — jump to next duplicate`;
     this.$dupMarker.setAttribute('aria-label', this.$dupMarker.title);
     if (! this.$row.contains(this.$dupMarker)) {
       // During a live refresh the title is already rendered; during a full

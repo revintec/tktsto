@@ -3534,9 +3534,9 @@ export class TreeView extends Tree {
     return clusters;
   }
 
-  // Flag duplicated nodes (dupMatch), their ancestors (dupPath), the total
-  // matches (dupCount), and the next match in tree order (dupNext), wrapping
-  // within each URL cluster.
+  // Flag duplicated nodes (dupMatch), their ancestors (dupPath), the number
+  // of other matches (dupCount), and the next match in tree order (dupNext),
+  // wrapping within each URL cluster.
   // returns the list of duplicated nodes.
   markDupNodes () {
     this.clearDupMarks();
@@ -3559,7 +3559,7 @@ export class TreeView extends Tree {
         extraCopies += cluster.length - 1;
         for (const [index, { node }] of cluster.entries()) {
           node.dupMatch = true;
-          node.dupCount = cluster.length;
+          node.dupCount = cluster.length - 1;
           node.dupNext = cluster[(index + 1) % cluster.length].node;
           dups.push(node);
           // keep every ancestor visible, so each duplicate is shown within
