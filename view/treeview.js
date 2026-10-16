@@ -1491,9 +1491,12 @@ export class TreeView extends Tree {
     const parentId = toDelete.parent.id;
     const delIndex = toDelete.indexOf();
     const rootId = toDelete.id;
-    // if leaf, just delete it... simple
-    if (cursor.isLeaf()) {
-      //debug('delete leaf node');
+    // Treat a closed window and its only leaf tab as one deletion action.
+    const singleClosedTab = cursor.isUnloadedWindow()
+      && (cursor.nodes.length === 1)
+      && cursor.nodes[0].isUnloadedTab()
+      && cursor.nodes[0].isLeaf();
+    if (cursor.isLeaf() || singleClosedTab) {
       const dicts = toDelete.serializeSubtree();
       await toDelete.deleteSelf({ reason: 'userAction' });
       this.pushUndo(

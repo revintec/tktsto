@@ -531,8 +531,7 @@ class Bkgd {
     if (winObj) { await this.tree.onWindowBoundsChanged(winObj, winNode); }
 
     // set window node as 'active' and set others as just 'loaded'
-    // (so the focused window can have a brighter row in the tree view
-    //  and "session" mode TreeViews can auto-scroll to the focused window)
+    // (so the focused window can have a brighter row in the tree view)
     const now = Date.now();
     const winNodes = this.tree.root.findNodes(
       // all loaded or recently-closed windows (less than 3 seconds ago)

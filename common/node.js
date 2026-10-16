@@ -1267,7 +1267,8 @@ export class Node {
     // save briefly so onTabRemoved can find it in a few milliseconds
     this.oldTabId = tabId;
     // distinguish between manual unload and "bkgd woken up by onTabRemoved"
-    if (wasActuallyLoaded && (undefined !== tabId) && (! isWindowClosing))
+    if (wasActuallyLoaded && (undefined !== tabId) && (! isWindowClosing)
+      && ('mergeOpenWindowsIntoTree' !== args.reason))
       this.tabClosedReason = 'unload';
 
     // save loaded tabs on window close

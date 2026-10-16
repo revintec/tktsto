@@ -883,7 +883,8 @@ export class Tree {
     // if tab closed manually by user, but it has label/notes
     else if (tabNode.shouldUnloadNotDelete()) {
       // keep tab in tree to preserve its metadata
-      await tabNode.unload({ reason: 'onTabRemoved', detail: 'hasMetadata' });
+      await tabNode.unload({ reason: 'onTabRemoved', detail: 'hasMetadata',
+        wasLoaded: false });
     }
     // if tab is boring but has kids
     else if (tabNode.hasKids()) {
@@ -1728,6 +1729,10 @@ export class Tree {
         if ((! found) && tabNode.isLoaded()) {
           // FIXME: use tabNode.setWasLoaded()
           // (that would allow for any syncing and stuff to happen)
+          // A tab close can wake the worker, but its handler waits for
+          // this merge to finish. Keep the current session's identity
+          // so that queued close event can still find and remove it.
+          if (trustTabIds) tabNode.oldTabId = tabNode.tabId;
           tabNode.tabId = undefined;
           tabNode.loaded = false;
           tabNode.wasLoaded = true;

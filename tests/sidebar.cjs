@@ -126,6 +126,136 @@ const server = http.createServer(async (req, res) => {
       assert.ok(geometry.rowBackgrounds.every(bg => bg === 'none'), 'No rounded branch selection backgrounds remain');
     };
 
+    // Browser window focus must preserve each sidebar's browsing position.
+    // Only active-tab changes in its own focused window should reveal a row.
+    const sidebarPosition = () => ({
+      cursor: tree.cursor.id,
+      scrollTop: tree.$.scrollTop,
+      branchExpanded: tree.nodes.branch.isExpanded()
+    });
+    const settleFollowing = async () => {
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 20)));
+      await page.waitForFunction(() => !tree.smoothScrollInProgress);
+      await settle();
+    };
+    const expectPositionPreserved = async (change, message) => {
+      const before = await page.evaluate(sidebarPosition);
+      await page.evaluate(change);
+      await settleFollowing();
+      assert.deepEqual(await page.evaluate(sidebarPosition), before, message);
+    };
+    const expectTabRevealed = async id => {
+      await page.waitForFunction(id => tree.cursor.id === id, id);
+      await settleFollowing();
+      const row = await page.locator(`#node${id} > .row`).boundingBox();
+      const container = await page.locator('#tree-view').boundingBox();
+      assert.ok(row.y >= container.y && row.y + row.height <= container.y + container.height,
+        `Active tab ${id} is scrolled into view`);
+    };
+    await page.evaluate(async () => {
+      window.activateNode = (id, active) => tree.tree_nodeChanged({
+        nodeId: id, type: 'setActive', active, loaded: true
+      });
+      const win = await tree.root.addChild(tree.root.nodes.length,
+        { id: 'focus-other-window', type: 'window', windowId: 8, loaded: true, render: true },
+        { reason: 'tree_nodeAdded' });
+      await win.addChild(0,
+        { id: 'focus-other-tab', url: 'https://other.test', loaded: true, active: true, render: true },
+        { reason: 'tree_nodeAdded' });
+    });
+    for (const scope of ['session', 'window']) {
+      await page.evaluate(scope => {
+        tree.viewScope = scope;
+        tree.windowNode.active = false;
+        tree.nodes['focus-other-window'].active = true;
+        tree.nodes.active.active = true;
+        tree.nodes.c.active = false;
+        tree.expandOverrideClear();
+        tree.$renderWholeTree();
+        tree.cfg.cursorFollowsActiveTab = true;
+      }, scope);
+      await reset('a');
+      await expectPositionPreserved(async () => {
+        await activateNode('focus-other-window', false);
+        await activateNode('win', true);
+      }, `${scope}: focusing this window preserves scroll, cursor, and folds`);
+      assert.equal(await page.evaluate(() => tree.windowNode.isActive()), true,
+        'Window focus state still updates');
+      await expectPositionPreserved(() => activateNode('active', true),
+        `${scope}: a repeated activation notification does not scroll`);
+      await expectPositionPreserved(async () => {
+        await activateNode('win', false);
+        await activateNode('focus-other-window', true);
+      }, `${scope}: focusing another window preserves the sidebar position`);
+      await expectPositionPreserved(async () => {
+        await activateNode('active', false);
+        await activateNode('c', true);
+      }, `${scope}: tab changes in this window while unfocused do not scroll`);
+      await expectPositionPreserved(async () => {
+        await activateNode('focus-other-tab', false);
+        await activateNode('focus-other-tab', true);
+      }, `${scope}: tab changes in another focused window do not scroll`);
+      await expectPositionPreserved(async () => {
+        await tree.tree_nodeChanged({ nodeId: 'focus-other-window',
+          type: 'setTabFields', changes: { active: false } });
+        await tree.tree_nodeChanged({ nodeId: 'win',
+          type: 'setTabFields', changes: { active: true } });
+      }, `${scope}: bulk window focus updates do not scroll`);
+
+      await page.evaluate(async () => {
+        await activateNode('c', false);
+        await activateNode('active', true);
+      });
+      await expectTabRevealed('active');
+      assert.equal(await page.evaluate(() => tree.nodes.branch.expanded), false,
+        'Following a tab only temporarily expands its parents');
+
+      await reset('a');
+      await page.evaluate(async () => {
+        await activateNode('active', false);
+        await tree.nodes.branch.addChild(tree.nodes.branch.nodes.length,
+          { id: 'focus-new-tab', url: 'https://new.test', tabId: 100, loaded: true, active: true, render: true },
+          { reason: 'tree_nodeAdded' });
+      });
+      await expectTabRevealed('focus-new-tab');
+
+      await reset('a');
+      await page.evaluate(async () => {
+        await activateNode('focus-new-tab', false);
+        await tree.tree_nodeChanged({ nodeId: 'active',
+          type: 'setTabFields', changes: { active: true } });
+      });
+      await expectTabRevealed('active');
+
+      await page.evaluate(async () => {
+        await activateNode('active', false);
+        await activateNode('focus-new-tab', true);
+      });
+      await expectTabRevealed('focus-new-tab');
+      await reset('a');
+      await page.evaluate(async () => {
+        await tree.nodes['focus-new-tab'].deleteSelf({ reason: 'tree_nodeDeleted' });
+        await activateNode('active', true);
+      });
+      await expectTabRevealed('active');
+
+      await page.evaluate(() => activateNode('active', false));
+      await reset('a');
+      await expectPositionPreserved(async () => {
+        await activateNode('active', true);
+        await activateNode('win', false);
+      }, `${scope}: losing focus cancels a pending tab reveal`);
+      await page.evaluate(() => { tree.cfg.cursorFollowsActiveTab = false; });
+    }
+    await page.evaluate(async () => {
+      tree.viewScope = 'session';
+      await tree.nodes['focus-other-window'].deleteSelf({ reason: 'tree_nodeDeleted' });
+      tree.windowNode.prevActiveTab = null;
+      tree.expandOverrideClear();
+      tree.$renderWholeTree();
+    });
+    await reset('a');
+
     assert.deepEqual(await page.locator('#top-tools > .button').evaluateAll(buttons => buttons.map(b => b.id)), ['options-btn', 'help-btn', 'locate-tab-btn']);
     assert.equal(await page.locator('#options-btn svg').count(), 1);
     assert.equal((await page.locator('#options-btn').textContent()).trim(), '');
@@ -375,6 +505,58 @@ const server = http.createServer(async (req, res) => {
     assert.deepEqual(await marked(), ['a', 'branch', 'burieddup'], 'Shift-arrows in text inputs retain normal text selection');
     await page.locator('#locate-tab-btn').click();
     await page.waitForFunction(() => !tree.filterViewActive && tree.cursor.id === 'active');
+
+    // A closed window containing just one leaf tab is one deletion action,
+    // whether expanded or collapsed, and undo restores both nodes.
+    const singleTabDeletion = await page.evaluate(async () => {
+      const results = [];
+      const originalDialog = tree.inputDialog;
+      let prompts = 0;
+      tree.inputDialog = async () => { prompts++; return { button: 'Cancel' }; };
+      try {
+        for (const expanded of [true, false]) {
+          const win = await tree.root.addChild(tree.root.nodes.length,
+            { id: 'delete-window', type: 'window', expanded, render: true },
+            { reason: 'tree_nodeAdded' });
+          await win.addChild(0, { id: 'delete-tab', url: 'https://delete.test',
+            wasLoaded: true, note: 'Preserve on undo', render: true },
+            { reason: 'tree_nodeAdded' });
+          tree.undoStack = []; tree.redoStack = [];
+          await tree.setCursor(win, { instant: true });
+          await tree.action_deleteNode({ type: 'keydown' });
+          const deleted = !tree.nodes['delete-window'] && !tree.nodes['delete-tab'];
+          const historyLength = tree.undoStack.length;
+          await tree.action_undo({});
+          const restored = tree.nodes['delete-tab']?.parent === tree.nodes['delete-window']
+            && tree.nodes['delete-tab']?.note === 'Preserve on undo';
+          await tree.action_redo({});
+          const deletedAgain = !tree.nodes['delete-window'] && !tree.nodes['delete-tab'];
+          results.push({ expanded, prompts, deleted, historyLength, restored, deletedAgain });
+          if (tree.nodes['delete-window'])
+            await tree.nodes['delete-window'].deleteSelf({ reason: 'tree_nodeDeleted' });
+        }
+        const win = await tree.root.addChild(tree.root.nodes.length,
+          { id: 'delete-window', type: 'window', render: true }, { reason: 'tree_nodeAdded' });
+        const tab = await win.addChild(0,
+          { id: 'delete-tab', url: 'https://delete.test', render: true }, { reason: 'tree_nodeAdded' });
+        await tab.addChild(0, { id: 'delete-note', label: 'A third node', render: true },
+          { reason: 'tree_nodeAdded' });
+        await tree.setCursor(win, { instant: true });
+        await tree.action_deleteNode({ type: 'keydown' });
+        results.push({ prompts, keptLargerBranch: !!tree.nodes['delete-note'] });
+        await win.deleteSelf({ reason: 'tree_nodeDeleted' });
+      } finally {
+        tree.inputDialog = originalDialog;
+        tree.undoStack = []; tree.redoStack = [];
+        tree.$renderUndoRedoBtns();
+      }
+      return results;
+    });
+    assert.deepEqual(singleTabDeletion, [
+      { expanded: true, prompts: 0, deleted: true, historyLength: 1, restored: true, deletedAgain: true },
+      { expanded: false, prompts: 0, deleted: true, historyLength: 1, restored: true, deletedAgain: true },
+      { prompts: 1, keptLargerBranch: true }
+    ]);
 
     // Use real node moves on unloaded notes so browser tab APIs are not needed.
     await page.evaluate(() => {
