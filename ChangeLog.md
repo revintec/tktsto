@@ -7,6 +7,19 @@ What changed, and when?  You know the drill.
 
 Bug fixes:
 
+- Prevent incomplete tree writes from sending items to **lost+found** when
+  Chrome restarts the background worker while the extension stays enabled.
+  Adds, moves, and deletes now commit all affected parent links together,
+  before browser operations or notifications. Delayed edits cannot recreate
+  deleted nodes. Recovery restores detached branches to their saved parent
+  when possible, and repairs missing, duplicate, or cyclic child links.
+
+- Exclude **Chrome app and popup windows** from the live session tree,
+  including when tab events arrive before the window-created event. App
+  events no longer consume saved-tab/window restoration queues. Startup
+  removes previously generated app entries whose tabs are still open and
+  have no saved content; notes, bookmarks, and saved branches are preserved.
+
 - Fixed **runaway tab duplication** ("tab listing growing out of control").
   When two open browser windows both matched the same window node in the
   tree -- for example a single-tab popup (video call, mini player, web app

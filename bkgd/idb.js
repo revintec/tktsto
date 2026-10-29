@@ -65,13 +65,36 @@ export class IDB {
   }
 
   saveNode (node) {
-    this.setDirty();
-    return this.saveObj(this.nodeDbName, node.id, node.toDict());
+    return this.saveNodes([node]);
   }
 
   deleteNode (nodeId) {
+    return this.saveNodes([], [nodeId]);
+  }
+
+  async saveNodes (nodes, deletedIds = []) {
+    // Capture one consistent tree state before yielding. A structural edit
+    // must commit its node and both sides of every parent link together.
+    const records = [...new Set(nodes)].map(node => ({
+      key: node.id, data: JSON.stringify(node.toDict())
+    }));
     this.setDirty();
-    return this.deleteObj(this.nodeDbName, nodeId);
+    const db = await this.db;
+    return new Promise((resolve, reject) => {
+      const txn = db.transaction(this.nodeDbName, 'readwrite');
+      const store = txn.objectStore(this.nodeDbName);
+      txn.oncomplete = () => resolve();
+      txn.onabort = () => reject(txn.error || new Error('Node transaction aborted'));
+      txn.onerror = () => reject(txn.error);
+      try {
+        for (const record of records) store.put(record);
+        for (const id of deletedIds) store.delete(id);
+      } catch (err) {
+        // Even a synchronous enqueue failure must roll back earlier puts.
+        try { txn.abort(); } catch { /* already aborted */ }
+        reject(err);
+      }
+    });
   }
 
   async loadAllNodes () {

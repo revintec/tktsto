@@ -77,6 +77,11 @@ export class Node {
     //this.nodes = [];  // restore this elsewhere
   }
 
+  async persistStructure (nodes, deletedIds = []) {
+    // NodeStore persists the edit before browser calls or notifications can
+    // yield to another event. Views and detached trees need no storage.
+  }
+
   async deleteSelf (args) {  //  TODO: rename this, maybe just use destroy ()
     debug(`Node.deleteSelf(${args.reason}, ${this.id})`, args);
     // root should refuse to delete itself
@@ -94,6 +99,7 @@ export class Node {
     await this.setMarked(false, { reason: 'deleteSelf' });
 
     // remove this node from its parent
+    const parent = this.parent;
     this.parent.bump('mtime', args);
     this.parent.nodes.splice(this.indexOf(), 1);
     this.parent = null;
@@ -104,6 +110,7 @@ export class Node {
 
     // bump timestamp
     this.bump('mtime', args);
+    await this.persistStructure([parent], [this.id]);
     // notify others
     if ([
       'userAction', 'onTabRemoved', 'emptyWindowClosed'
@@ -824,6 +831,7 @@ export class Node {
     // bump timestamp
     this.bump('mtime', args);
     // tell other threads
+    await this.persistStructure([this, newNode]);
     if ([
       'userAction',
       'onTabCreated', 'onTabAttached', 'onWindowCreated',
@@ -1563,6 +1571,7 @@ export class Node {
 
     // bump new parent timestamp
     destParent.bump('mtime', args);
+    await this.persistStructure([this, prevParent, destParent]);
 
     // if new parent is marked, unmark self
     if (this.marked) {

@@ -69,12 +69,8 @@ export class TreeStore extends Tree {
     console.timeEnd('TreeStore.rebuildNodeFromSerializedHash');
     log(`loadTreeFromDB(): loaded ${numLoaded}/${numIds} nodes`);
 
-    // if there's stale data in the DB
-    // (happens sometimes during development)
-    // re-attach all orphaned nodes
-    if (numLoaded !== numIds) {
-      await this.reattachOrphanedNodes(nodeIds);
-    }
+    // Recover incomplete writes from older versions and persist repaired links.
+    await this.reattachOrphanedNodes(nodeIds);
 
     // look for empty boring windows and delete them
     // (because Firefox, for some reason, keeps accumulating these)
@@ -92,80 +88,56 @@ export class TreeStore extends Tree {
   }
 
   async reattachOrphanedNodes (nodeIds) {
-    const newParentName = 'lost+found';
-    let numToReattach = 1;  // start with 1 for the lost+found node
-
-    // first, find or create a 'lost+found/' node to hold others
+    const remaining = new Set(Object.keys(nodeIds).filter(id => !this.nodes[id]));
+    const seen = new Set(Object.keys(this.nodes));
+    const attach = (id, parent) => {
+      const node = new this.NodeClass(this, parent);
+      node.id = id;
+      parent.nodes.push(node);
+      this.rebuildNodeFromSerializedHash(node, nodeIds, seen);
+      for (const attachedId of seen) remaining.delete(attachedId);
+    };
     let lostFound;
-    for (const node of this.root.nodes) {
-      if (newParentName === node.label) {
-        lostFound = node;
-        break;
+    while (remaining.size) {
+      // A child record may have committed before its parent's child list.
+      // Restore that link in place, including entire detached branches.
+      let recovered = false;
+      for (const id of remaining) {
+        const parent = this.nodes[nodeIds[id].parent];
+        if (parent) {
+          attach(id, parent);
+          recovered = true;
+        }
       }
-    }
-    if (! lostFound) {
-      log(`fsck: making new ${newParentName} node`);
-      lostFound = await this.root.addChild(
-        //this.root.nodes.length,  // attach as last child
-        0,  // attach as first child
-        { label: newParentName, note: 'orphaned nodes found during fsck' },
-        { reason: 'reattachOrphanedNodes' });
-    }
-    const lfDict = lostFound.toDict();
-    const modifiedNodes = [lostFound.id];
+      if (recovered) continue;
 
-    // warn about nodes not attached to the tree
-    // and list some human-readable info about them
-    for (const nodeId of Object.keys(nodeIds)) {
-      let n = nodeIds[nodeId];
-      if (undefined === this.nodes[nodeId]) {
-        numToReattach ++;
-        let summary = `${n.label} ~ ${n.title} [${n.url}]`;
-        log(`fsck: detached node: ${summary}`, n);
+      // Only use lost+found when no saved parent leads back to the tree.
+      // Break an orphaned parent cycle at one node if necessary.
+      if (!lostFound) {
+        lostFound = this.root.nodes.find(n => n.label === 'lost+found');
+        if (!lostFound) {
+          lostFound = await this.root.addChild(0,
+            { label: 'lost+found', note: 'orphaned nodes found during fsck' },
+            { reason: 'reattachOrphanedNodes' });
+          seen.add(lostFound.id);
+        }
       }
+      const id = [...remaining].find(id =>
+        !nodeIds[nodeIds[id].parent] || nodeIds[id].parent === id)
+        || remaining.values().next().value;
+      warn('fsck: recovering branch under lost+found:', id);
+      attach(id, lostFound);
     }
 
-    // second, attach orphans to lost+found
-    // (entire branches may have been detached, and attaching the top-most
-    //  node of each detached branch should recover the whole thing)
-    for (const nodeId of Object.keys(nodeIds)) {
-      if ('root' === nodeId) continue; // root can't be orphaned
-
-      const n = nodeIds[nodeId];
-      const parentId = n.parent;
-      const p = nodeIds[parentId];
-      // attach to lost+found if:
-      // - parent ID not in the database
-      // - node is its own parent
-      // - parent doesn't recognize child
-      if ((undefined === p)  // parent ID not in database
-        || (parentId === nodeId)  // is own parent
-        || (! p.nodes.includes(nodeId))  // parent doesn't expect this child
-      ) {
-        log('fsck: attaching orphan to lost+found:', nodeIds[nodeId]);
-        nodeIds[nodeId].parent = lostFound.id;
-        nodeIds[nodeId].loaded = false;
-        nodeIds[nodeId].wasLoaded = false;
-        lfDict.nodes.push(nodeId);
-        modifiedNodes.push(nodeId);
-      }
-    }
-
-    // actually attach the orphaned nodes now
-    nodeIds[lostFound.id] = lfDict;
-    const numAttached = this.rebuildNodeFromSerializedHash(lostFound, nodeIds);
-
-    // write changes to database
-    for (const nodeId of modifiedNodes) {
-      const node = this.nodes[nodeId];
-      await this.db.saveNode(node);
-    }
-
-    // summary
-    warn(`fsck: reattachOrphanedNodes() attached ${numAttached} orphans under ${newParentName}`);
-    if (numToReattach !== numAttached) {
-      warn(`fsck: attached ${numAttached} nodes but expected ${numToReattach}`);
-    }
+    // Also remove dangling child IDs and correct stale parent pointers in
+    // already reachable nodes. Commit every repaired link in one transaction.
+    const changed = Object.values(this.nodes).filter(node => {
+      const saved = nodeIds[node.id];
+      const current = node.toDict();
+      return !saved || saved.parent !== current.parent
+        || JSON.stringify(saved.nodes) !== JSON.stringify(current.nodes);
+    });
+    if (changed.length) await this.db.saveNodes(changed);
   }
 
 }

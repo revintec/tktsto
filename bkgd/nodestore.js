@@ -32,33 +32,18 @@ export class NodeStore extends Node {
     const changed = await promise;
     if (changed) {
       const unlock = await this.writeLock.lock();
-      try { await this.tree.db.saveNode(this); }
+      try { await this.persistStructure([this]); }
       finally { unlock(); }
     }
     return changed;
   }
 
-  async deleteSelf (args) {
-    debug(`NodeStore.deleteSelf(${args.reason}, ${this.id})`, args);
-    const nodeId = this.id;  // save for later
-    const parent = this.parent;
-
-    // let parent class do its thing
-    const changed = await super.deleteSelf(args);
-    // if delete failed, skip the rest
-    if (changed) {
-      const unlock = await this.writeLock.lock();
-      try {
-        // parent child list changed
-        if (parent && parent.id && (parent.id !== nodeId))
-          await this.tree.db.saveNode(parent);
-        // remove from database
-        await this.tree.db.deleteNode(nodeId);
-      }
-      finally { unlock(); }
-    }
-
-    return changed;
+  persistStructure (nodes, deletedIds = []) {
+    // A delayed field update must not recreate a node that was deleted while
+    // its notification or write lock was pending.
+    const liveNodes = nodes.filter(node => node && this.tree.nodes[node.id] === node);
+    if (!liveNodes.length && !deletedIds.length) return Promise.resolve();
+    return this.tree.db.saveNodes(liveNodes, deletedIds);
   }
 
   async addChild (index, details, ...extra) {
@@ -70,19 +55,7 @@ export class NodeStore extends Node {
     if (! details.id) { details.id = this.newNodeId(); }
 
     // create new Node object
-    const newNode = await super.addChild(index, details, ...extra);
-    if (newNode) {
-      const unlock = await this.writeLock.lock();
-      try {
-        // add child to database
-        await this.tree.db.saveNode(newNode);
-        // parent changed too
-        await this.tree.db.saveNode(this);
-      }
-      finally { unlock(); }
-    }
-
-    return newNode;
+    return await super.addChild(index, details, ...extra);
   }
 
   async setNotes (label, note, args) {
@@ -111,10 +84,9 @@ export class NodeStore extends Node {
       const unlock = await this.writeLock.lock();
       try {
         // if any parents changed, save them too
-        for (const [n, checkbox, checkboxPx] of parents) {
-          if ((n.checkbox !== checkbox) || (n.checkboxPx !== checkboxPx))
-            await this.tree.db.saveNode(n);
-        }
+        const changedParents = parents.filter(([n, checkbox, checkboxPx]) =>
+          (n.checkbox !== checkbox) || (n.checkboxPx !== checkboxPx));
+        await this.persistStructure(changedParents.map(([n]) => n));
       }
       finally { unlock(); }
     }
@@ -135,26 +107,6 @@ export class NodeStore extends Node {
   async unload (args) {
     debug(`NodeStore.unload(${args.reason}, ${this.id})`, args);
     return await this.saveIfChanged(super.unload(args));
-  }
-
-  async moveTo (destParent, destIndex, args) {
-    debug(`NodeStore.moveTo(${args.reason}, ${this.id})`, args);
-    const prevParent = this.parent;
-
-    const changed = await super.moveTo(destParent, destIndex, args);
-    if (changed) {
-      const unlock = await this.writeLock.lock();
-      try {
-        await this.tree.db.saveNode(this);
-        if (destParent)
-          await this.tree.db.saveNode(destParent);
-        if (prevParent && (prevParent !== destParent))
-          await this.tree.db.saveNode(prevParent);
-      }
-      finally { unlock(); }
-    }
-
-    return changed;
   }
 
   async setExpanded (expanded, args) {

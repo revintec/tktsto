@@ -48,6 +48,17 @@ Tested: Chromium 134 to 146
 
 Includes Ungoogled Chromium.
 
+Only normal tabbed browser windows are tracked. Chrome app windows and
+standalone popups are excluded, since app popups share the same window type
+as ordinary popups. Previously saved app notes and bookmarks remain in the
+tree as unloaded history.
+
+Chrome controls app title bar height; extensions and page zoom cannot make
+the native title bar thinner. A PWA's developer can opt into
+[Window Controls Overlay](https://developer.mozilla.org/en-US/docs/Web/API/Window_Controls_Overlay_API)
+to use the title bar area for app content, where supported. This is an
+app-level feature, not a title bar height setting in TKTSTO.
+
 Known issues:
 
 - Chromium-based browsers often do weird and inconsistent things when

@@ -112,7 +112,7 @@ export class TreeView extends Tree {
     this.zoomSteps = 12;
     this.zoomMax = 3;
     this.zoomMin = 1 / this.zoomMax;
-    // Bottom-bar toggle for the "flatten lone child" display.
+    // Toggle for the "flatten lone child" display, beside undo/redo.
     this.$flattenLoneChildBtn = doc.getElementById('flatten-lone-child-btn');
     // toggle for the "duplicate view" (show only duplicated nodes)
     this.$dupBtn = doc.getElementById('dup-btn');
@@ -184,6 +184,8 @@ export class TreeView extends Tree {
     this.$markedCountValue = doc.getElementById('marked-count-value');
     this.$markedActions = doc.getElementById('marked-actions');
     this.$clearMarkedBtn = doc.getElementById('clear-marked-btn');
+    this.$moveMarkedBeforeBtn = doc.getElementById('move-marked-before-btn');
+    this.$moveMarkedFirstChildBtn = doc.getElementById('move-marked-first-child-btn');
 
     // node row hover menu
     this.$hoverMenu = doc.getElementById('hover-menu');
@@ -228,7 +230,7 @@ export class TreeView extends Tree {
         (key, newVal, oldVal) => this.setZoomLevel(newVal, oldVal));
       this.setZoomLevel(this.cfg.treeViewZoomLevel, this.cfg.treeViewZoomLevel);
 
-      // Keep zoom visibility and the independent bottom-bar Flat toggle
+      // Keep zoom visibility and the independent Flat toggle
       // in sync with config.
       this.$renderZoomButtons();
       this.$renderFlattenLoneChildBtn();
@@ -392,18 +394,10 @@ export class TreeView extends Tree {
     // update the counter widget
     (this.$markedCountValue || this.$markedCount).innerText = `${this.markedNodes.length}${plus}`;
     this.$markedActions?.classList.toggle('hidden', this.markedNodes.length === 0);
-    this.$markedCount.setAttribute('aria-label', `Place ${this.markedNodes.length} selected nodes at the cursor`);
+    this.$markedCount.setAttribute('aria-label', `${this.markedNodes.length} marked items${plus ? ' and their children' : ''}`);
     if (this.markedNodes.length <= 0)
       this.$markedCount.classList.add('hidden');
     else this.$markedCount.classList.remove('hidden');
-  }
-
-  onMarkedCountHover () {
-    this.hideHoverMenu();
-  }
-
-  onMarkedCountClick (event) {
-    return this.runButtonAction('pasteMarked', event);
   }
 
   showSearch () {
@@ -2021,16 +2015,24 @@ export class TreeView extends Tree {
     this.setStatus(`Unmarked all nodes`);
   }
 
-  async action_pasteMarked (event, before=false) {
+  async action_pasteMarked (event, placement='auto') {
     // skip no-op cases
-    if (! this.cursor) return;
-    debug(`action_pasteMarked(before=${before})`);
+    if ((! this.cursor) || (! this.markedNodes.length)) return;
+    debug(`action_pasteMarked(placement=${placement})`);
 
     // find the right place to put the marked nodes
     let destParent;
     let destIndex;
     const markedParent = this.cursor.markedBy();
-    if (this.cursor.isRoot()) {
+    if ('before' === placement) {
+      if (this.cursor.isRoot()) {
+        this.setStatus('Cannot move items before the session root');
+        return;
+      }
+      destParent = this.cursor.parent;
+      destIndex = this.cursor.indexOf();
+    }
+    else if (('firstChild' === placement) || this.cursor.isRoot()) {
       destParent = this.cursor;
       destIndex = 0;
     }
@@ -2039,11 +2041,6 @@ export class TreeView extends Tree {
       // but this is a strict No Infinite Recursion Zone
       destParent = markedParent.parent;
       destIndex = markedParent.indexOf();
-    }
-    else if (before) {
-      // if pasting before, just paste at the cursor's position
-      destParent = this.cursor.parent;
-      destIndex = this.cursor.indexOf();
     }
     else if (this.cursor.hasKids() && this.cursor.isExpanded()) {
       // if expanded with kids, paste as new first children
@@ -2063,29 +2060,48 @@ export class TreeView extends Tree {
     //  then paste in-place to change the order)
     let numMoved = 0;
     let numFailed = 0;
-    let moved = false;
     // A range can select both a parent and its children. Move each branch once.
     const toMove = this.markedNodes.map(id => this.nodes[id])
-      .filter(node => node && ! node.findParent(parent => parent.marked));
+      .filter(node => node && ! node.findParent(parent => parent.marked))
+      .filter(node => ('before' !== placement) || (node !== this.cursor));
+    // Explicit destinations must never move a branch inside itself or silently
+    // redirect the move to a different item. moveTo() can otherwise promote kids.
+    if (toMove.some(node => node.isParentOf(destParent))) {
+      this.setStatus('Choose a destination outside the marked branches');
+      return;
+    }
     await this.withMoveHistory('move selected nodes', async () => {
       for (const node of toMove) {
         // special case: moving from/to same parent can get weird
         const pastingToSameParent = (node.parent === destParent);
         const oldIndex = node.indexOf();
-        moved = await node.moveTo(destParent, destIndex, { reason: 'userAction' });
-        if (moved) numMoved ++;
-        else numFailed ++;
+        if (pastingToSameParent && oldIndex === destIndex) {
+          destIndex ++;
+          continue;
+        }
+        const moved = await node.moveTo(destParent, destIndex, { reason: 'userAction' });
+        if (! moved) {
+          numFailed ++;
+          continue;  // keep the requested insertion point for the next branch
+        }
+        numMoved ++;
         if (pastingToSameParent && oldIndex < destIndex) destIndex --;
         destIndex ++;
       }
     });
+    if (('firstChild' === placement) && toMove.length > numFailed)
+      await destParent.setExpanded(true, { reason: 'userAction' });
     if (numFailed > 0)
       this.setStatus(`Moved ${numMoved} nodes, ${numFailed} failed`);
     else this.setStatus(`Moved ${numMoved} nodes`);
   }
 
   async action_pasteMarkedBefore (event) {
-    return await this.action_pasteMarked(event, true);
+    return await this.action_pasteMarked(event, 'before');
+  }
+
+  async action_pasteMarkedFirstChild (event) {
+    return await this.action_pasteMarked(event, 'firstChild');
   }
 
   async action_backupSession (event) {
@@ -2948,7 +2964,7 @@ export class TreeView extends Tree {
     this.$zoomInBtn.addEventListener('click', () => {
       this.onZoomBtn(1);
     });
-    // bottom-bar flatten-lone-child toggle
+    // flatten-lone-child toggle beside undo/redo
     if (this.$flattenLoneChildBtn) {
       this.$flattenLoneChildBtn.addEventListener('click', () => {
         this.onFlattenLoneChildBtnClick();
@@ -2983,12 +2999,15 @@ export class TreeView extends Tree {
     this.$helpBtn.addEventListener('click', () => {
       this.onHelpBtnClick();
     });
-    // "marked count" widget
-    this.$markedCount.addEventListener('mouseover', () => {
-      this.onMarkedCountHover();
+    // Marked-item actions share the keyboard action lock for undo/redo.
+    this.$markedActions?.addEventListener('mouseover', () => {
+      this.hideHoverMenu();
     });
-    this.$markedCount.addEventListener('click', event => {
-      this.onMarkedCountClick(event);
+    this.$moveMarkedBeforeBtn?.addEventListener('click', event => {
+      this.runButtonAction('pasteMarkedBefore', event);
+    });
+    this.$moveMarkedFirstChildBtn?.addEventListener('click', event => {
+      this.runButtonAction('pasteMarkedFirstChild', event);
     });
     this.$clearMarkedBtn?.addEventListener('click', event => {
       this.runButtonAction('unmarkAll', event);

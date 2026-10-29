@@ -38,6 +38,7 @@ export class Tree {
     // holds tabIds of "tabs" we need to ignore,
     // like Vivaldi panels
     this.tabBlacklist = {};
+    this.browserWindows = new Map();
 
     this.cfg = new Config();
     this.cfgDefaults = {
@@ -242,31 +243,34 @@ export class Tree {
     return result;
   }
 
-  rebuildNodeFromSerializedHash (node, hash) {
+  rebuildNodeFromSerializedHash (node, hash, seen = new Set()) {
     //debug('rebuildNodeFromSerializedHash()', node, hash);
     let numLoaded = 0;
     const nodeDict = hash[node.id];
     if (! nodeDict) {
       warn(`rebuildNodeFromSerializedHash(): no nodeId "${node.id}"`);
-      return 1;
+      return 0;
     }
     //debug('nodeDict()', nodeDict);
 
     // update caches
+    seen.add(node.id);
     this.nodes[node.id] = node;
     // build the node
     node.fromDict(nodeDict);
     this.nodeMarkChanged(node);  // update our mark cache
     node.nodes = [];
     numLoaded ++;
-    for (const nodeId of nodeDict.nodes) {
-      if ('root' === nodeId) continue;  // root can't be a child
+    for (const nodeId of (nodeDict.nodes || [])) {
+      // Incomplete older writes can leave missing, repeated, or cyclic links.
+      // Never create a phantom node or attach the same branch twice.
+      if (!hash[nodeId] || seen.has(nodeId)) continue;
       //debug('nodeDict() childId', nodeId);
       const child = new this.NodeClass(this, node);
       child.id = nodeId;
       this.nodes[nodeId] = child;
       node.nodes.push(child);
-      numLoaded += this.rebuildNodeFromSerializedHash(child, hash);
+      numLoaded += this.rebuildNodeFromSerializedHash(child, hash, seen);
     }
     return numLoaded;
   }
@@ -405,7 +409,29 @@ export class Tree {
     return tab.url;
   }
 
+  trackBrowserWindow (window) {
+    // App popups share Chrome's "popup" type with ordinary popups. Only
+    // tabbed browser windows belong in the live session tree.
+    const tracked = window.type === 'normal'
+      || (isFirefox && window.type === 'popup');
+    this.browserWindows.set(window.id, tracked);
+    return tracked;
+  }
+
+  async isTrackedWindow (windowId) {
+    if (this.browserWindows.has(windowId)) return this.browserWindows.get(windowId);
+    try {
+      return this.trackBrowserWindow(await api.windows.get(windowId,
+        isChrome ? { windowTypes: ['normal', 'popup', 'app'] } : {}));
+    } catch {
+      // A tab event can outlive its window, or belong to an inaccessible app.
+      // Do not invent a window node; a later event can retry the lookup.
+      return null;
+    }
+  }
+
   async onWindowCreated (window, args) {
+    if (!this.trackBrowserWindow(window)) return null;
     // are we re-opening a saved window?
     let savedWindowNode;
     if (this.bkgd.windowsLoading.length > 0) {
@@ -539,6 +565,7 @@ export class Tree {
 
     const unlock = await this.onTabCreatedMutex.lock();
     try {
+      if (!await this.isTrackedWindow(tab.windowId)) return;
 
       // Zen Browser is fucked
       if (isZenBrowser) {
@@ -900,6 +927,7 @@ export class Tree {
   }
 
   async onTabActivated (windowId, tabId) {
+    if (!await this.isTrackedWindow(windowId)) return;
     // do everything we can to find the correct tab and window nodes...
     // ... but if that fails, it's almost certainly not an issue
     // (because for some reason, browsers like Vivaldi fire off this event
@@ -1028,6 +1056,7 @@ export class Tree {
   }
 
   async onTabMoved (tabId, moveInfo) {
+    if (!await this.isTrackedWindow(moveInfo.windowId)) return;
     // tab was moved within a window
     // tabId: number
     // moveInfo.fromIndex: number
@@ -1154,6 +1183,14 @@ export class Tree {
   }
 
   async onTabAttached (tabId, attachInfo) {
+    const tracked = await this.isTrackedWindow(attachInfo.newWindowId);
+    if (tracked === null) return;  // A failed lookup is not an app classification.
+    if (!tracked) {
+      // Moving a browser tab into an app removes it from the live session.
+      // Normal close handling preserves its notes/bookmarks and children,
+      // without closing the actual tab in the app.
+      return this.onTabRemoved(tabId, { isWindowClosing: false });
+    }
     // tabId: number
     // attachInfo.newPosition: number
     // attachInfo.newWindowId: number
@@ -1187,8 +1224,19 @@ export class Tree {
 
     // find the tab node
     const tabNode = this.getNodeByTabId(tabId);
-    // if tab doesn't exist, do nothing
-    if (! tabNode) return warn(`Tree.onTabAttached(${tabId}): no tab found`);
+    if (! tabNode) {
+      // A tab moved out of an ignored app has no existing tree node.
+      let tab;
+      try { tab = await api.tabs.get(tabId); } catch { return; }
+      return this.onTabCreated(tab);
+    }
+    if (!tabNode.isLoaded() || tabNode.tabId !== tabId) {
+      // Annotated tabs were retained as saved nodes when moved into an app.
+      // Reattach their live identity when they return to a browser window.
+      await tabNode.setTabFields({ tabId, windowId, loaded: true },
+        { reason: 'onTabCreated' });
+      delete tabNode.oldTabId;
+    }
 
     // find or create the window node
     let windowNode;
@@ -1272,6 +1320,7 @@ export class Tree {
     // changeInfo.mutedInfo: https://developer.chrome.com/docs/extensions/reference/api/tabs#type-MutedInfo
     // changeInfo.autoDiscardable: boolean
     debug(`Tree.onTabUpdated(tabId=${tabId})`, changeInfo, tab);
+    if (!await this.isTrackedWindow(tab.windowId)) return;
 
     // dammit, Zen Browser
     if (tabId < 0) {
@@ -1358,6 +1407,7 @@ export class Tree {
     try {
       // get the actual tab, to check if anything else changed
       const tab = await api.tabs.get(addedTabId);
+      if (!await this.isTrackedWindow(tab.windowId)) return;
       if (tab) {
         // check for other changes too
         for (const field of

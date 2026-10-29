@@ -60,6 +60,10 @@ const server = http.createServer(async (req, res) => {
         const records = new Map();
         tree.db = {
           saveNode: async node => records.set(node.id, structuredClone(node.toDict())),
+          saveNodes: async (nodes, deletedIds = []) => {
+            for (const node of nodes) records.set(node.id, structuredClone(node.toDict()));
+            for (const id of deletedIds) records.delete(id);
+          },
           deleteNode: async id => records.delete(id)
         };
         tree.resolveTreeLoaded();

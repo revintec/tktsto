@@ -245,9 +245,13 @@ include...
 - `Cmd+Shift+Arrows`: move the node the cursor is on
 - `Space`: expand/collapse the highlighted node
 
-The broom beside the selected-node count clears the selection. Click the count
-with the insert-into-list icon to move selected branches to the cursor. Keyboard moves,
-drag-and-drop, moving a selection, and flattening each create one Undo/Redo entry.
+The broom beside the marked-item count clears the selection. Select a destination
+item, then click **Before** to move marked branches immediately before it at the
+same level, or **First child** to insert them at the start of its children. Both
+buttons work whether the destination is expanded, collapsed, or empty; **First
+child** expands it to show the moved items. Branches keep their children and move
+in the order they were marked. Keyboard moves, drag-and-drop, moving a selection,
+and flattening each create one Undo/Redo entry.
 If the tree changes, Undo/Redo restores the surviving moves where possible and
 reports any skipped moves whose nodes or destinations are no longer available.
 

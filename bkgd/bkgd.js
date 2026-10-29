@@ -299,7 +299,8 @@ class Bkgd {
     log('mergeOpenWindowsIntoTree()');
     let windows;
     try {
-      windows = await api.windows.getAll({ populate: true });
+      windows = await api.windows.getAll({ populate: true,
+        ...(isChrome ? { windowTypes: ['normal', 'popup', 'app'] } : {}) });
     } catch (err) {
       // somehow I got firefox into a weird state
       // where it couldn't even return a list of windows...
@@ -313,6 +314,23 @@ class Bkgd {
     // asleep, which changes the URL but never the tabId
     const sameBrowserSession = await this.detectSameBrowserSession();
     log(`mergeOpenWindowsIntoTree(): sameBrowserSession=${sameBrowserSession}`);
+
+    const browserWindows = [];
+    for (const window of windows) {
+      if (this.tree.trackBrowserWindow(window)) browserWindows.push(window);
+      else if (sameBrowserSession) {
+        // Remove previously generated app entries only when every descendant
+        // is still an open app tab with no saved content or annotations.
+        const node = this.tree.root.getWindowId(window.id);
+        const tabs = new Set((window.tabs || []).map(tab => tab.id));
+        if (node && !node.shouldUnloadNotDelete(false)
+          && node.findNodes().every(n => n.isLoaded() && tabs.has(n.tabId)
+            && !n.shouldUnloadNotDelete(false))) {
+          await node.deleteSelf({ reason: 'emptyWindowClosed' });
+        }
+      }
+    }
+    windows = browserWindows;
 
     console.time('mergeOpenWindowsIntoTree');
     // attach browser windows to window nodes
@@ -390,7 +408,7 @@ class Bkgd {
         if (node.id === obj.winNode.id) found = true;
       }
       if ((! found) && (node.isLoaded() || node.hasLoadedTabs())) {
-        node.unload({ reason: 'mergeOpenWindowsIntoTree' });
+        await node.unload({ reason: 'mergeOpenWindowsIntoTree' });
       }
     }
 
@@ -495,13 +513,23 @@ class Bkgd {
     if (! args) args = {};
     if (! args.reason) args.reason = 'onWindowCreated';
     await this.treeLoaded;
-    return this.tree.onWindowCreated (window, args);
+    const node = await this.tree.onWindowCreated(window, args);
+    if (node) {
+      // A first tab event can arrive before windows.get can see its window.
+      // Once the real normal window exists, catch up any skipped tab events.
+      let tabs;
+      try { tabs = await api.tabs.query({ windowId: window.id }); }
+      catch { return node; }  // The window may already have closed again.
+      for (const tab of tabs) await this.tree.onTabCreated(tab);
+    }
+    return node;
   }
 
   async onWindowRemoved (windowId) {
     log(`bkgd.onWindowRemoved: ID ${windowId}`);
     // TODO: detect whether window was closed by user or by us
     await this.treeLoaded;
+    this.tree.browserWindows.delete(windowId);
     // TODO
     const node = this.tree.root.getWindowId(windowId);
     if (node) {

@@ -260,10 +260,10 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#options-btn svg').count(), 1);
     assert.equal((await page.locator('#options-btn').textContent()).trim(), '');
     assert.equal(await page.locator('#help-btn').isVisible(), false);
-    assert.deepEqual(await page.locator('#bottom-bar > .button').evaluateAll(buttons => buttons.map(b => b.id)), ['details-btn', 'flatten-lone-child-btn', 'filter-btn', 'dup-btn', 'backup-btn']);
+    assert.deepEqual(await page.locator('#bottom-bar > .button').evaluateAll(buttons => buttons.map(b => b.id)), ['details-btn', 'filter-btn', 'dup-btn', 'backup-btn']);
     for (const hideZoomButtons of [false, true]) {
       await page.evaluate(hide => { tree.cfg.hideZoomButtons = hide; tree.$renderZoomButtons(); }, hideZoomButtons);
-      assert.equal(await page.locator('#flatten-lone-child-btn').isVisible(), true, 'Bottom Flat button stays available regardless of zoom visibility');
+      assert.equal(await page.locator('#top-primary > #redo-btn + #flatten-lone-child-btn').isVisible(), true, 'Flat stays beside Undo/Redo regardless of zoom visibility');
     }
     await page.evaluate(() => {
       window.openedPages = [];
@@ -383,10 +383,12 @@ const server = http.createServer(async (req, res) => {
     assert.deepEqual(await marked(), [], 'Returning to the anchor clears the whole range');
     await page.keyboard.press('Shift+ArrowDown'); await settle();
     assert.deepEqual(await marked(), ['a', 'b'], 'Range can expand again after returning to the anchor');
-    assert.equal(await page.locator('#marked-count svg').count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'Move marked items before the selected item', exact: true }).isVisible(), true);
+    assert.equal(await page.getByRole('button', { name: 'Move marked items as first children of the selected item', exact: true }).isVisible(), true);
+    assert.equal(await page.locator('#marked-count-value').textContent(), '2');
     const clearBounds = await page.locator('#clear-marked-btn').boundingBox();
     const countBounds = await page.locator('#marked-count').boundingBox();
-    assert.ok(clearBounds.x + clearBounds.width < countBounds.x, 'Broom appears to the left of the move count');
+    assert.ok(clearBounds.x + clearBounds.width < countBounds.x, 'Broom appears to the left of the marked-item count');
     await page.locator('#clear-marked-btn').click(); await settle();
     assert.deepEqual(await marked(), [], 'Broom clears every selected node');
     assert.equal(await page.locator('#marked-actions').isVisible(), false);
@@ -580,8 +582,104 @@ const server = http.createServer(async (req, res) => {
         await tree.setCursor(dest, { instant: true });
       };
     });
+    // Both buttons use the selected item as their exact destination, regardless
+    // of its expansion state, and keep nested selections together on undo/redo.
+    for (const placement of ['before', 'first-child']) {
+      for (const state of ['expanded', 'collapsed', 'empty']) {
+        await page.evaluate(async state => {
+          await moveCase();
+          if (state === 'empty') await moveFixture.existing.deleteSelf({ reason: 'tree_nodeDeleted' });
+          else await moveFixture.dest.setExpanded(state === 'expanded', { reason: 'userAction' });
+          // A stale hovered row must not become the toolbar destination.
+          tree.mouseNode = moveFixture.tail;
+        }, state);
+        await page.locator(`#move-marked-${placement}-btn`).click(); await settle();
+        const expectedChildren = placement === 'before'
+          ? (state === 'empty' ? [] : ['existing'])
+          : ['x', 'y', ...(state === 'empty' ? [] : ['existing'])];
+        const expected = {
+          children: expectedChildren, adjacentBefore: placement === 'before',
+          nested: true, history: 1, cursor: true,
+          expanded: placement === 'first-child' || state !== 'collapsed'
+        };
+        const moveState = () => {
+          const { dest, x, y, child } = moveFixture;
+          return {
+            children: dest.nodes.map(n => n.label),
+            adjacentBefore: x.parent === dest.parent && y.parent === dest.parent
+              && x.indexOf() === dest.indexOf() - 2 && y.indexOf() === dest.indexOf() - 1,
+            nested: child.parent === x, history: tree.undoStack.length,
+            cursor: tree.cursor === dest, expanded: dest.isExpanded()
+          };
+        };
+        assert.deepEqual(await page.evaluate(moveState), expected, `${placement}: ${state} destination`);
+        await page.locator('#undo-btn').click(); await settle();
+        assert.deepEqual(await page.evaluate(() => moveFixture.src.nodes.map(n => n.label)), ['x', 'y', 'tail']);
+        await page.locator('#redo-btn').click(); await settle();
+        assert.deepEqual(await page.evaluate(moveState), expected, `${placement}: ${state} redo`);
+      }
+    }
+
+    // Reordering existing siblings preserves marking order and the target item.
+    for (const placement of ['before', 'first-child']) {
+      await page.evaluate(async placement => {
+        await moveCase();
+        await tree.action_unmarkAll({});
+        await moveFixture.y.setMarked(true, { reason: 'userAction' });
+        await moveFixture.x.setMarked(true, { reason: 'userAction' });
+        await tree.setCursor(placement === 'before' ? moveFixture.tail : moveFixture.src, { instant: true });
+      }, placement);
+      await page.locator(`#move-marked-${placement}-btn`).click(); await settle();
+      assert.deepEqual(await page.evaluate(() => moveFixture.src.nodes.map(n => n.label)), ['y', 'x', 'tail'], `${placement} keeps marking order within the same parent`);
+      await page.locator('#undo-btn').click(); await settle();
+      assert.deepEqual(await page.evaluate(() => moveFixture.src.nodes.map(n => n.label)), ['x', 'y', 'tail']);
+    }
+    await page.evaluate(async () => {
+      await moveCase();
+      await tree.setCursor(moveFixture.x, { instant: true });
+    });
+    await page.locator('#move-marked-before-btn').click(); await settle();
+    assert.deepEqual(await page.evaluate(() => moveFixture.src.nodes.map(n => n.label)), ['y', 'x', 'tail'], 'Before leaves a marked destination in place and moves other branches before it');
+    assert.equal(await page.evaluate(() => moveFixture.child.parent === moveFixture.x), true);
+
+    for (const placement of ['before', 'first-child']) {
+      await page.evaluate(async () => {
+        await moveCase();
+        moveFixture.originalMove = moveFixture.x.moveTo;
+        moveFixture.x.moveTo = async () => false;
+      });
+      await page.locator(`#move-marked-${placement}-btn`).click(); await settle();
+      assert.deepEqual(await page.evaluate(() => {
+        const { src, dest, x, y } = moveFixture;
+        x.moveTo = moveFixture.originalMove;
+        return {
+          failedUnchanged: x.parent === src,
+          adjacentBefore: y.parent === dest.parent && y.indexOf() === dest.indexOf() - 1,
+          children: dest.nodes.map(n => n.label)
+        };
+      }), { failedUnchanged: true, adjacentBefore: placement === 'before',
+        children: placement === 'before' ? ['existing'] : ['y', 'existing'] }, `${placement} retains the insertion point after a failed move`);
+      assert.match(await page.locator('#status-text').textContent(), /Moved 1 nodes, 1 failed/);
+    }
+
+    // Reject destinations inside the moving branches without splitting branches
+    // or moving unrelated marked items to a different destination.
+    for (const [placement, target] of [['first-child', 'x'], ['first-child', 'child'], ['before', 'child'], ['before', 'root']]) {
+      await page.evaluate(async target => {
+        await moveCase();
+        await tree.setCursor(target === 'root' ? tree.root : moveFixture[target], { instant: true });
+      }, target);
+      await page.locator(`#move-marked-${placement}-btn`).click(); await settle();
+      assert.deepEqual(await page.evaluate(() => ({
+        source: moveFixture.src.nodes.map(n => n.label),
+        nested: moveFixture.child.parent === moveFixture.x,
+        history: tree.undoStack.length
+      })), { source: ['x', 'y', 'tail'], nested: true, history: 0 }, `${placement}: rejects ${target} without changing the tree`);
+      assert.match(await page.locator('#status-text').textContent(), target === 'root' ? /session root/ : /outside the marked branches/);
+    }
+
     await page.evaluate(() => moveCase());
-    await page.locator('#marked-count').click(); await settle();
+    await page.locator('#move-marked-first-child-btn').click(); await settle();
     assert.deepEqual(await page.evaluate(() => ({
       children: moveFixture.dest.nodes.map(n => n.label),
       history: tree.undoStack.length,
@@ -751,6 +849,7 @@ const server = http.createServer(async (req, res) => {
     }
     await setPanelState(true, true);
     await reset('active');
+    await page.evaluate(() => tree.nodes.active.setMarked(true, { reason: 'userAction' }));
 
     for (const theme of ['tk-night', 'tk-day']) {
       await page.locator('#theme-variant').evaluate((el, theme) => { el.href = `/themes/${theme}.css`; }, theme);
@@ -761,7 +860,10 @@ const server = http.createServer(async (req, res) => {
       assert.ok(options.x + options.width <= button.x, 'Options stays to the left of the crosshair');
       assert.ok(Math.abs(options.y - button.y) < 1);
       const primary = await page.locator('#view-scope-btn').boundingBox();
-      assert.ok(Math.abs(primary.y - button.y) < 1, 'Top controls fit one aligned row at standard sidebar widths');
+      const redo = await page.locator('#redo-btn').boundingBox();
+      const flat = await page.locator('#flatten-lone-child-btn').boundingBox();
+      assert.ok(primary.y > button.y && Math.abs(flat.y - redo.y) < 1 && flat.x > redo.x + redo.width && flat.x + flat.width <= 260,
+        'Narrow sidebars keep Flat to the right of Undo/Redo below the utility buttons');
       const bottomButtons = await page.locator('#bottom-bar > .button').evaluateAll(buttons => buttons.map(button => {
         const rect = button.getBoundingClientRect();
         return { id: button.id, y: rect.y, right: rect.right, height: rect.height, fits: button.scrollWidth <= button.clientWidth };
@@ -769,6 +871,12 @@ const server = http.createServer(async (req, res) => {
       assert.ok(bottomButtons.every(b => Math.abs(b.y - bottomButtons[0].y) < 1 && b.fits), 'Bottom buttons fit a single row without clipped labels');
       assert.equal(bottomButtons.at(-1).id, 'backup-btn');
       assert.ok(bottomButtons.every(b => Math.abs(b.height - button.height) < 1), 'Top and bottom buttons share a consistent height');
+      const markedControls = await page.locator('#marked-actions > *').evaluateAll(controls => controls.map(control => {
+        const rect = control.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, fits: control.scrollWidth <= control.clientWidth };
+      }));
+      assert.ok(markedControls.every(control => control.left >= 0 && control.right <= 260 && control.fits), 'Marked-item count and both move buttons fit the narrow sidebar');
+      assert.ok(markedControls.every(control => Math.abs(control.top - markedControls[0].top) < 1), 'Marked-item controls fit on one row at standard sidebar widths');
       await page.evaluate(() => new Promise(requestAnimationFrame));
       const dupButton = await page.locator('#dup-btn').boundingBox();
       const badge = await page.locator('#dup-count').boundingBox();
@@ -801,7 +909,7 @@ const server = http.createServer(async (req, res) => {
     await page.evaluate(() => { tree.$topBar.classList.remove('hidden'); tree.$bottomBar.classList.remove('hidden'); });
     await page.locator('#dup-count').waitFor({ state: 'visible' });
     assert.deepEqual(errors, [], 'No browser JavaScript errors');
-    console.log('PASS: selection controls, range selection, live Dup count, active-tab reveal, move/drag/flatten undo and redo after tree changes, focus/pointer shading and keyboard gating, and both theme layouts');
+    console.log('PASS: separate before/first-child move buttons, selection controls, range selection, live Dup count, active-tab reveal, move/drag/flatten undo and redo after tree changes, focus/pointer shading and keyboard gating, and both theme layouts');
   } finally {
     await browser.close();
   }
