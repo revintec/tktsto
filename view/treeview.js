@@ -315,9 +315,17 @@ export class TreeView extends Tree {
     if (this.cursor) {
       oldCursor = this.cursor.id;
     }
+    const expandedIds = Object.keys(this.expandOverrides);
 
     // load the tree
     await super.loadTreeFromBkgd();
+    this.windowNode = this.root.getWindowId(this.windowId);
+    // A browser restore can replace a temporary window with its original.
+    this.dupExpandOverrides = this.dupExpandOverrides
+      .map(n => this.nodes[n.id]).filter(Boolean);
+    this.filterExpandOverrides = this.filterExpandOverrides
+      .map(n => this.nodes[n.id]).filter(Boolean);
+    this.expandOverrides = {};
 
     // a reload replaces every Node object, which drops the view-only
     // duplicate-view marks; recompute them so the filter stays correct
@@ -329,13 +337,16 @@ export class TreeView extends Tree {
       this.markFilterNodes(this.filterString);
 
     // render ... everything
-    if (render) this.$renderWholeTree();
+    if (render) {
+      this.$renderWholeTree();
+      for (const id of expandedIds) await this.expandOverride(this.nodes[id], true);
+    }
 
     this.updateMarkedCount();
 
     // restore state
     if (oldCursor) {
-      const newCursor = this.nodes[oldCursor];
+      const newCursor = this.nodes[oldCursor] || this.windowNode?.getActiveTab() || this.windowNode;
       await this.setCursor(newCursor, { instant: true });
     }
   }
@@ -1848,6 +1859,24 @@ export class TreeView extends Tree {
     }
     // if unloaded window, load it
     else if (cursor.isUnloadedWindow()) {
+      const tabCount = cursor.getWindowRestoreTabs().length;
+      if (tabCount > 10) {
+        const result = await this.inputDialog({
+          doc: this.document,
+          title: 'Reopen Window',
+          input: false,
+          description: `Reopening this window will open ${tabCount} tabs. Continue?`,
+          buttons: ['Cancel', 'Open tabs']
+        });
+        if (result?.button !== 'Open tabs') {
+          this.setStatus('Reopen window: cancelled');
+          return;
+        }
+        // Browser recovery or another sidebar may have changed the tree
+        // while the dialog was open. Never load a stale window object.
+        cursor = this.nodes[cursor.id];
+        if (!cursor?.isUnloadedWindow()) return;
+      }
       cursor.load({ reason: 'userAction' });
       this.setStatus(`loaded ${cursor.toLine()}`);
     }

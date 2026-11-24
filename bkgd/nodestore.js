@@ -53,6 +53,10 @@ export class NodeStore extends Node {
     debug(`NodeStore.addChild(${index})`, details);
     // must allocate ID before creating node and emitting notifications
     if (! details.id) { details.id = this.newNodeId(); }
+    if (['onTabCreated', 'onWindowCreated', 'mergeOpenWindowsIntoTree', 'setPinned']
+      .includes(extra[0]?.reason)) {
+      details.browserRestoreToken = this.tree.bkgd.browserRestore?.token;
+    }
 
     // create new Node object
     return await super.addChild(index, details, ...extra);

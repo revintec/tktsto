@@ -518,6 +518,43 @@ export class NodeView extends Node {
     if (mode <= 1) hide($url);
     else setOrHide($url, this.url, '', 'URL', this.url);
 
+    const $history = getOrCreate('detail-history', 'div');
+    const history = Array.isArray(this.tabHistory)
+      ? this.tabHistory.filter(entry => entry && typeof entry.url === 'string' && entry.url)
+      : [];
+    if (mode <= 1 || !history.length) hide($history);
+    else {
+      hasContent = true;
+      $history.classList.remove('hidden');
+      $history.replaceChildren();
+      const $heading = doc.createElement('b');
+      $heading.textContent = `History (${history.length})`;
+      const $list = doc.createElement('ol');
+      for (const entry of history) {
+        const $item = doc.createElement('li');
+        $item.dataset.kind = entry.kind;
+        if (entry.title) {
+          const $title = doc.createElement('div');
+          $title.className = 'history-title';
+          $title.textContent = entry.title;
+          $item.appendChild($title);
+        }
+        const $url = doc.createElement('div');
+        $url.className = 'history-url';
+        $url.textContent = entry.url;
+        $item.appendChild($url);
+        if (Number.isFinite(entry.changedAt) && entry.changedAt > 0) {
+          const $time = doc.createElement('div');
+          $time.className = 'history-time';
+          const change = entry.kind === 'title' ? 'Title changed' : 'URL changed';
+          $time.textContent = `${change} ${fmtDate(entry.changedAt)}`;
+          $item.appendChild($time);
+        }
+        $list.appendChild($item);
+      }
+      $history.append($heading, $list);
+    }
+
     // node ID
     let $nodeId = getOrCreate('detail-node-id', 'div');
     if (mode <= 1) hide($nodeId);

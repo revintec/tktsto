@@ -1,0 +1,20 @@
+{
+  "stats": {
+    "treeEntries": 952,
+    "matchedHistorical": 950,
+    "missingHistorical": 1,
+    "preservedLaterEntries": 2,
+    "changedParents": 42,
+    "changedChildLists": 15,
+    "liveTabs": 295,
+    "chromeWindowsToReorder": 4,
+    "chromeMoveCalls": 166,
+    "canApply": true
+  },
+  "semanticOracle": "05:30 original tree by full URL",
+  "testsPassed": true,
+  "realChromeIntegrationPassed": true,
+  "scriptVersion": "2026-11-24.structure.1",
+  "scriptSha256": "d7859df4cba38c9396effe431cdb9152c690c20e3e71c85e3e5c75b60f19773c",
+  "reloadBehavior": "Only the empty unannotated saved window is pruned by TKTSTO; all 930 pages survive."
+}

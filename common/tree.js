@@ -68,6 +68,7 @@ export class Tree {
       'note',
       'title',
       'url',
+      'tabHistory',
       'bookmark',
       'faviconUrl',
       'expanded',
@@ -86,6 +87,7 @@ export class Tree {
       'discarded',
       'frozen',
       'hidden',
+      'browserRestoreToken',
     ];
 
     // TODO: make user-configurable
@@ -204,6 +206,7 @@ export class Tree {
     // (maybe call derived class handler?)
 
     // restore session from serialized data
+    this.markedNodes = [];
     this.createRootNode();
     const numLoaded = this.rebuildNodeFromSerializedHash(
       this.root, response.nodes);
@@ -228,7 +231,7 @@ export class Tree {
           //if ((null === v) || ('' === v))
           //  delete node[k];
           // remove data which shouldn't persist
-          if (['tabId', 'oldTabId', 'windowId', 'marked'].includes(k))
+          if (['tabId', 'oldTabId', 'windowId', 'marked', 'browserRestoreToken'].includes(k))
             delete node[k];
           // remove values which haven't changed from default
           if (defaultNode[k] === node[k])
@@ -827,6 +830,29 @@ export class Tree {
       else {
         debug('Tree.onTabCreated(default) not moving new tab');
       }
+      // Restored tabs can already be pinned in their first onCreated event.
+      // Put them under Pinned before addChild synchronizes the browser's tab
+      // order; otherwise that synchronization would unpin them before the
+      // browser-restore matcher gets to inspect the window.
+      if (tab.pinned) {
+        let pinnedBranch = winNode.nodes[0];
+        if (!pinnedBranch?.isPinnedBranch()) {
+          pinnedBranch = await winNode.addChild(0, { label: 'Pinned' },
+            { reason: 'setPinned' });
+        }
+        destParent = pinnedBranch;
+        destIndex = pinnedBranch.nodes.length;
+      }
+      else if (winNode.nodes[0]?.isPinnedBranch()) {
+        // The first few restored tabs can arrive before active-tab tracking
+        // catches up. Never insert an ordinary tab before the Pinned heading:
+        // that would make the entire heading stop counting as pinned.
+        if (destParent === winNode) destIndex = Math.max(1, destIndex);
+        else if (destParent.isPinned() && !this.cfg.pinnedTabsOpenNewTabsPinnedToo) {
+          destParent = winNode;
+          destIndex = 1;
+        }
+      }
       // create the tree node
       // (created as not-active on purpose: activation is synced from
       //  the browser below, so it always flows through setActive() and
@@ -1370,6 +1396,8 @@ export class Tree {
       // so pull new values from tab object if necessary
       let value = changeInfo[field];
       if (undefined === value) value = tab[field];
+      // A partial browser update must not erase the last known page data.
+      if (undefined === value) continue;
       // clean up sloppy titles
       if ('title' === field) value = value.trim().replace(/\s+/g, ' ');
       // if data actually changed, add it to the outgoing message
@@ -1415,6 +1443,7 @@ export class Tree {
             'discarded', 'frozen', 'hidden']
         ) {
           let value = tab[field];
+          if (undefined === value) continue;
           // clean up sloppy titles
           if ('title' === field) value = value.trim().replace(/\s+/g, ' ');
           // if data actually changed, add it to the outgoing message
@@ -1476,6 +1505,10 @@ export class Tree {
         winNode.expanded = wasExpanded;
       }
     }
+  }
+
+  async tree_browserRestored () {
+    if (!this.bkgd) await this.loadTreeFromBkgd();
   }
 
   async tree_nodeAdded (msg, sender, sendResponse) {

@@ -13,6 +13,7 @@ import { Config } from '/common/config.js';
 import { IdGenerator } from '/common/id-generator.js';
 import * as sidepanel from './sidepanel.js';
 import { TreeStore } from './treestore.js';
+import { BrowserRestore } from './browser-restore.js';
 import { base32encode } from '/common/base32.js';
 import { createNewUserTutorialNodes } from '/bkgd/new-user.js';
 
@@ -38,6 +39,7 @@ class Bkgd {
     this.nodesLoadingMutex = new Mutex();
     this.nodesLoading = [];
     this.windowsLoading = [];
+    this.browserRestore = new BrowserRestore(this);
 
     // internal map of treeId : TreeViewInfo,
     // tracks the port and viewType and viewScope of each open TreeView
@@ -140,34 +142,36 @@ class Bkgd {
   }
 
   initWindowListeners () {
+    const listener = handler => this.browserRestore.wrapEvent(handler.bind(this));
     // monitor for windows being opened and closed
-    api.windows.onCreated.addListener( this.onWindowCreated.bind(this) );
-    api.windows.onRemoved.addListener( this.onWindowRemoved.bind(this) );
+    api.windows.onCreated.addListener( listener(this.onWindowCreated) );
+    api.windows.onRemoved.addListener( listener(this.onWindowRemoved) );
     // user changed keyboard focus to a new window
-    api.windows.onFocusChanged.addListener( this.onWindowFocusChanged.bind(this) );
+    api.windows.onFocusChanged.addListener( listener(this.onWindowFocusChanged) );
     // handle window resizing
     // Firefox 128.6.0esr-1~deb12u1 gives an error that it doesn't have this,
     // even though the docs say it does
     // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/windows/onBoundsChanged
     if (api.windows.onBoundsChanged)
-      api.windows.onBoundsChanged.addListener( this.onWindowBoundsChanged.bind(this) );
+      api.windows.onBoundsChanged.addListener( listener(this.onWindowBoundsChanged) );
   }
 
   initTabListeners () {
+    const listener = handler => this.browserRestore.wrapEvent(handler.bind(this));
     // tabs opened and closed
-    api.tabs.onCreated.addListener( this.onTabCreated.bind(this) );
-    api.tabs.onRemoved.addListener( this.onTabRemoved.bind(this) );
+    api.tabs.onCreated.addListener( listener(this.onTabCreated) );
+    api.tabs.onRemoved.addListener( listener(this.onTabRemoved) );
     // tab became the window's active tab
-    api.tabs.onActivated.addListener (this.onTabActivated.bind(this) );
+    api.tabs.onActivated.addListener (listener(this.onTabActivated) );
     // tab moved within a single window
-    api.tabs.onMoved.addListener (this.onTabMoved.bind(this) );
+    api.tabs.onMoved.addListener (listener(this.onTabMoved) );
     // tab moved from one window to another
-    api.tabs.onAttached.addListener (this.onTabAttached.bind(this) );
-    api.tabs.onDetached.addListener (this.onTabDetached.bind(this) );
+    api.tabs.onAttached.addListener (listener(this.onTabAttached) );
+    api.tabs.onDetached.addListener (listener(this.onTabDetached) );
     // virtually anything else changed
-    api.tabs.onUpdated.addListener (this.onTabUpdated.bind(this) );
+    api.tabs.onUpdated.addListener (listener(this.onTabUpdated) );
     // not really sure when this happens or why or how
-    api.tabs.onReplaced.addListener (this.onTabReplaced.bind(this) );
+    api.tabs.onReplaced.addListener (listener(this.onTabReplaced) );
   }
 
   async initConfig () {
@@ -287,7 +291,8 @@ class Bkgd {
     try {
       const stored = await api.storage.session.get(marker);
       if (stored && stored[marker]) return true;
-      await api.storage.session.set({ [marker]: Date.now() });
+      // BrowserRestore.init saves the marker with its candidate snapshot,
+      // before the startup merge can change the old loaded state.
     } catch (err) {
       // browser has no storage.session: can't tell, assume IDs are stale
       warn('detectSameBrowserSession() failed', err);
@@ -314,6 +319,7 @@ class Bkgd {
     // asleep, which changes the URL but never the tabId
     const sameBrowserSession = await this.detectSameBrowserSession();
     log(`mergeOpenWindowsIntoTree(): sameBrowserSession=${sameBrowserSession}`);
+    await this.browserRestore.init(sameBrowserSession);
 
     const browserWindows = [];
     for (const window of windows) {
@@ -503,6 +509,7 @@ class Bkgd {
 
     console.timeEnd('mergeOpenWindowsIntoTree');
     log('mergeOpenWindowsIntoTree() done');
+    this.browserRestore.schedule();
   }
 
   async onWindowCreated (window, args) {
@@ -522,6 +529,7 @@ class Bkgd {
       catch { return node; }  // The window may already have closed again.
       for (const tab of tabs) await this.tree.onTabCreated(tab);
     }
+    this.browserRestore.schedule();
     return node;
   }
 
@@ -610,7 +618,8 @@ class Bkgd {
     // tab.windowId: number
     debug(`bkgd.onTabCreated(${tab.id}): ${tab.url} : ${tab.title}`, tab);
     await this.treeLoaded;
-    return this.tree.onTabCreated(tab);
+    try { return await this.tree.onTabCreated(tab); }
+    finally { this.browserRestore.schedule(); }
   }
 
   async onTabRemoved (tabId, removeInfo) {
@@ -683,7 +692,8 @@ class Bkgd {
     // changeInfo.autoDiscardable: boolean
     debug(`bkgd.onTabUpdated(tabId=${tabId})`, changeInfo, tab);
     await this.treeLoaded;
-    return this.tree.onTabUpdated(tabId, changeInfo, tab);
+    try { return await this.tree.onTabUpdated(tabId, changeInfo, tab); }
+    finally { this.browserRestore.schedule(); }
   }
 
   async onTabReplaced (addedTabId, removedTabId) {

@@ -129,13 +129,14 @@ export class TreeStore extends Tree {
       attach(id, lostFound);
     }
 
-    // Also remove dangling child IDs and correct stale parent pointers in
-    // already reachable nodes. Commit every repaired link in one transaction.
+    // Also remove dangling child IDs, correct stale parent pointers, and
+    // persist migrated history limits. Commit these repairs together.
     const changed = Object.values(this.nodes).filter(node => {
       const saved = nodeIds[node.id];
       const current = node.toDict();
       return !saved || saved.parent !== current.parent
-        || JSON.stringify(saved.nodes) !== JSON.stringify(current.nodes);
+        || JSON.stringify(saved.nodes) !== JSON.stringify(current.nodes)
+        || JSON.stringify(saved.tabHistory) !== JSON.stringify(current.tabHistory);
     });
     if (changed.length) await this.db.saveNodes(changed);
   }

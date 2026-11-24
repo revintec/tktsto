@@ -9,6 +9,46 @@ import {
   log, warn, error, debug, emit, isIllegalURL, isNewTabPage
 } from '/common/common.js';
 
+const TAB_HISTORY_LIMIT = 8;
+
+// Give navigation and title-only updates separate quotas. Keep each pair
+// once per kind, at its latest replacement time, without mutating snapshots.
+export function mergeTabHistories (...histories) {
+  const entries = new Map();
+  for (const history of histories) {
+    if (!Array.isArray(history)) continue;
+    for (const entry of history) {
+      if (!entry || typeof entry.url !== 'string' || !entry.url) continue;
+      const title = typeof entry.title === 'string' ? entry.title : '';
+      const changedAt = Number.isFinite(entry.changedAt) ? entry.changedAt : 0;
+      const kind = entry.kind === 'title' ? 'title' : 'url';
+      const key = JSON.stringify([kind, entry.url, title]);
+      if (!entries.has(key) || changedAt > entries.get(key).changedAt)
+        entries.set(key, { url: entry.url, title, changedAt, kind });
+    }
+  }
+  const counts = { title: 0, url: 0 };
+  return [...entries.values()].sort((a, b) => b.changedAt - a.changedAt)
+    .filter(entry => ++counts[entry.kind] <= TAB_HISTORY_LIMIT);
+}
+
+function normalizeTabHistory (history, currentUrl) {
+  if (!Array.isArray(history)) return undefined;
+  const entries = history.filter(entry => entry && typeof entry.url === 'string' && entry.url)
+    .map(entry => ({ ...entry,
+      changedAt: Number.isFinite(entry.changedAt) ? entry.changedAt : 0 }))
+    .sort((a, b) => b.changedAt - a.changedAt);
+  // Older histories have no change kind. Infer it from the next newer URL
+  // before trimming; the current page supplies that context for the first row.
+  let newerUrl = currentUrl;
+  for (const entry of entries) {
+    if (entry.kind !== 'title' && entry.kind !== 'url')
+      entry.kind = entry.url === newerUrl ? 'title' : 'url';
+    newerUrl = entry.url;
+  }
+  return mergeTabHistories(entries);
+}
+
 
 export class Node {
 
@@ -34,6 +74,7 @@ export class Node {
     this.note = undefined;
     this.title = undefined;
     this.url = undefined;
+    this.tabHistory = undefined;
     this.bookmark = undefined;
     this.faviconUrl = undefined;
     this.expanded = true;
@@ -73,6 +114,7 @@ export class Node {
   fromDict (d) {
     // restore values from a previously-dicted copy
     for (const key of this.tree.dictable) this[key] = d[key];
+    this.tabHistory = normalizeTabHistory(this.tabHistory, this.url);
     //this.parent.id = d.parent;  // restore this elsewhere
     //this.nodes = [];  // restore this elsewhere
   }
@@ -826,6 +868,7 @@ export class Node {
       if (! ['parent', 'nodes', 'parentId'].includes(key))
         newNode[key] = details[key];
     }
+    newNode.tabHistory = normalizeTabHistory(newNode.tabHistory, newNode.url);
     // update the tree caches
     this.tree.nodes[newNode.id] = newNode;
     // bump timestamp
@@ -1128,6 +1171,23 @@ export class Node {
     return false;
   }
 
+  withTabHistory (changes, when = Date.now()) {
+    // History supplied by another view/worker is authoritative; do not
+    // record the same change a second time while applying its notification.
+    if (Object.hasOwn(changes, 'tabHistory'))
+      return { ...changes, tabHistory: normalizeTabHistory(
+        changes.tabHistory, changes.url ?? this.url) };
+    if (this.isWindow() || !this.url) return changes;
+    const urlChanged = typeof changes.url === 'string' && changes.url !== this.url;
+    const titleChanged = typeof changes.title === 'string' && this.title
+      && changes.title !== this.title;
+    if (!urlChanged && !titleChanged) return changes;
+    return { ...changes, tabHistory: mergeTabHistories([
+      { url: this.url, title: this.title, changedAt: when,
+        kind: urlChanged ? 'url' : 'title' }
+    ], this.tabHistory) };
+  }
+
   async setTabFields (changes, args) {
     if (! args) return;
     // abort on no-op
@@ -1156,6 +1216,7 @@ export class Node {
     // bookmarks cannot be 'wasLoaded'
     if (changes.bookmark) changes.wasLoaded = false;
 
+    changes = this.withTabHistory(changes, args.when);
     // Do The Thing
     for (const [key, value] of Object.entries(changes)) this[key] = value;
     if (undefined !== changes.loaded) this.wasLoaded = changes.loaded;
@@ -1178,6 +1239,17 @@ export class Node {
           when: this.mtime });
 
     return changed;
+  }
+
+  getWindowRestoreTabs () {
+    if (!this.isWindow()) return [];
+    const descend = node => !node.isWindow();
+    let tabs = this.findNodes(
+      node => node.wasLoaded && node.isUnloadedTab(), descend);
+    // A window with no previously open tabs opens just its first saved tab.
+    if (!tabs.length)
+      tabs = this.findNodes(node => node.isUnloadedTab(), descend).slice(0, 1);
+    return tabs.filter(node => !isIllegalURL(node.url));
   }
 
   async load (args) {
@@ -1223,19 +1295,7 @@ export class Node {
       // if window, load the window
       else {
         debug(`loading saved window: ${this.id}`);
-        // get a list of 'wasLoaded' tabs
-        let tabList = this.findNodes(
-          (node) => { return (node.wasLoaded && node.isUnloadedTab()); },
-          (node) => { return ! node.isWindow(); }  // skip nested windows
-        );
-        // if window has no 'wasLoaded' tabs, just use the first tab
-        if (tabList.length < 1) {
-          tabList = this.findNodes(
-            (node) => { return (node.isUnloadedTab()); },
-            (node) => { return ! node.isWindow(); }  // skip nested windows
-          );
-          if (tabList.length > 1) tabList.length = 1;
-        }
+        const tabList = this.getWindowRestoreTabs();
         // load everything in the list
         let first = true;
         for (const kid of tabList) {
@@ -1243,11 +1303,9 @@ export class Node {
           const tabArgs = { ...args };
           tabArgs.discarded = true;
           //tabArgs.reason = 'loadSavedWindow';  // eh, unnecessary
-          if (! isIllegalURL(kid.url)) {
-            await kid.load(tabArgs);
-            // FIXME: find a better way to wait for window to open
-            if (first) await new Promise(r => setTimeout(r, 500));
-          }
+          await kid.load(tabArgs);
+          // FIXME: find a better way to wait for window to open
+          if (first) await new Promise(r => setTimeout(r, 500));
           first = false;
         }
       }

@@ -255,6 +255,60 @@ and flattening each create one Undo/Redo entry.
 If the tree changes, Undo/Redo restores the surviving moves where possible and
 reports any skipped moves whose nodes or destinations are no longer available.
 
+### Recovering after a Chrome crash
+
+You can use Chrome's **Restore** prompt even after TKTSTO has started. TKTSTO
+remembers the tabs which were open before the crash and reconnects a restored
+window to its original tree once its complete tab list is available. It keeps
+the original notes, saved children, labels, and tree positions, and uses the
+live tabs Chrome restored, including their browser history. Pending recovery
+survives the extension's background worker going to sleep.
+
+Matching requires one unambiguous window with the same exact URLs (including
+queries and fragments), pinned states, privacy mode, and number of copies of
+each URL. Changed or incomplete windows and identical candidate windows may
+remain separate. Avoid opening the saved window through TKTSTO as well while
+Chrome is restoring it. Alternatively, skip Chrome's Restore and open the
+original saved windows in TKTSTO; this opens their saved URLs.
+
+Reopening a saved window that would open more than 10 tabs asks for
+confirmation. The dialog shows the number of tabs to open, with **Cancel**
+selected by default. Only tabs that will actually reopen count toward this
+limit; saved tabs that stay closed and tabs in nested windows do not count.
+
+For existing duplicates, click **Backup**, then **Dup** to inspect matching
+entries and their locations. The automatic recovery only replaces temporary
+entries from the current recovery, and leaves entries with new notes, tasks,
+bookmarks, or saved children alone. It does not clean up older duplicates.
+Turn off Dup before deleting a parent branch so you can inspect all children.
+Importing a backup adds another tree; it does not replace the current session.
+
+### Tab history in Details
+
+Select a tab in the tree and click **Details** until the button cycles past
+**Notes** to the full **Details** view. Below the current title and URL,
+**History** lists the tab's earlier URL/title pairs, newest first. Each entry
+shows whether the URL or just the title changed, and when. Each tab keeps up
+to **8 title-only changes** and **8 URL changes** (16 records total), with
+independent limits so frequently changing titles cannot remove URL history.
+A change to both the URL and title counts as one URL-change record. Repeated
+pairs within each category appear once, at their most recent replacement
+time. Existing history is trimmed to these limits when loaded or imported.
+You can select and copy the old titles and URLs, and scroll the Details box
+to see older entries.
+
+History updates as the tab changes and stays with its tree entry when saved,
+unloaded, restored after a crash, or exported and imported in a backup.
+Navigation discovered when the background worker wakes up also preserves the
+previously saved URL and title. Closing or deleting tabs still follows the
+usual rules; deleting a tree entry also deletes its history.
+
+Recording starts with this update. Earlier URLs and titles that were already
+overwritten cannot be recovered, and intermediate changes while the extension
+was not running may be unavailable.
+
+### Extension shortcuts
+
 So in your extension hotkeys, I'd recommend assigning them like this:
 
 - `Alt+u`: unload the current tab

@@ -192,6 +192,29 @@ html, body {
   overflow-wrap: anywhere;
 }
 
+#detail-history {
+  margin-top: 0.5em;
+  overflow-wrap: anywhere;
+}
+
+#detail-history ol {
+  margin: 0.25em 0 0.5em;
+  padding-left: 1.5em;
+}
+
+#detail-history li + li {
+  margin-top: 0.5em;
+}
+
+#detail-history .history-title {
+  font-weight: bold;
+}
+
+#detail-history .history-time {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
 #details-box b {
   color: var(--details-label-fg);
 }

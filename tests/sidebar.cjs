@@ -508,6 +508,83 @@ const server = http.createServer(async (req, res) => {
     await page.locator('#locate-tab-btn').click();
     await page.waitForFunction(() => !tree.filterViewActive && tree.cursor.id === 'active');
 
+    // Large saved windows ask before opening any tabs through every UI path.
+    await page.evaluate(() => {
+      window.reopenFixture = async (count, wasLoaded = true) => {
+        const previous = tree.nodes['reopen-window'];
+        if (previous) await previous.deleteSelf({ reason: 'tree_nodeDeleted' });
+        const win = await tree.root.addChild(tree.root.nodes.length,
+          { id: 'reopen-window', type: 'window', label: 'Saved research', render: true },
+          { reason: 'tree_nodeAdded' });
+        for (let i = 0; i < count; i++)
+          await win.addChild(i, { id: `reopen-${i}`, url: `https://reopen.test/${i}`,
+            wasLoaded, render: true }, { reason: 'tree_nodeAdded' });
+        // Neither ordinary saved tabs nor tabs belonging to another window
+        // are part of the automatic reopening operation.
+        await win.addChild(count, { id: 'reopen-saved', url: 'https://saved.test/', render: true },
+          { reason: 'tree_nodeAdded' });
+        const nested = await win.addChild(count + 1,
+          { id: 'reopen-nested', type: 'window', render: true }, { reason: 'tree_nodeAdded' });
+        await nested.addChild(0, { id: 'reopen-nested-tab', url: 'https://nested.test/',
+          wasLoaded: true, render: true }, { reason: 'tree_nodeAdded' });
+        window.reopenCalls = 0;
+        win.load = async () => { window.reopenCalls++; };
+        tree.viewScope = 'session';
+        tree.$renderWholeTree();
+        await tree.setCursor(win, { instant: true });
+        tree.mouseNode = win;
+      };
+      window.startReopen = (action, type) => {
+        window.reopenAction = tree[action]({ type, preventDefault () {}, stopPropagation () {} });
+      };
+    });
+    await page.evaluate(async () => {
+      await reopenFixture(10);
+      startReopen('action_loadNode', 'command');
+      await reopenAction;
+    });
+    assert.equal(await page.locator('#inputDialog').count(), 0, 'Exactly ten tabs need no confirmation');
+    assert.equal(await page.evaluate(() => reopenCalls), 1);
+    await page.evaluate(() => reopenFixture(11));
+    for (const [action, type, response] of [
+      ['action_loadOrEditNode', 'keydown', 'Enter'],
+      ['action_loadOrFocusNode', 'dblclick', 'Escape'],
+      ['action_loadNode', 'click', 'Cancel'],
+      ['action_loadNode', 'command', 'Open tabs']
+    ]) {
+      await page.evaluate(({ action, type }) => startReopen(action, type), { action, type });
+      await page.locator('#inputDialog').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('#dialogDescription').innerText(),
+        'Reopening this window will open 11 tabs. Continue?');
+      assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Cancel');
+      assert.equal(await page.evaluate(() => reopenCalls), 0, 'No window opens before approval');
+      if (['Enter', 'Escape'].includes(response)) await page.keyboard.press(response);
+      else await page.getByRole('button', { name: response, exact: true }).click();
+      await page.evaluate(() => reopenAction);
+      await settle();
+      assert.equal(await page.evaluate(() => reopenCalls), response === 'Open tabs' ? 1 : 0);
+    }
+    await page.evaluate(async () => {
+      await reopenFixture(20, false);
+      startReopen('action_loadNode', 'command');
+      await reopenAction;
+    });
+    assert.equal(await page.locator('#inputDialog').count(), 0,
+      'A window containing only saved tabs opens one tab without prompting');
+    assert.equal(await page.evaluate(() => reopenCalls), 1);
+    // A restore in another view while the confirmation is open must not load
+    // the stale saved-window object when the user accepts.
+    await page.evaluate(async () => {
+      await reopenFixture(11);
+      startReopen('action_loadNode', 'command');
+    });
+    await page.locator('#inputDialog').waitFor({ state: 'visible' });
+    await page.evaluate(() => { tree.nodes['reopen-window'].loaded = true; });
+    await page.getByRole('button', { name: 'Open tabs', exact: true }).click();
+    await page.evaluate(() => reopenAction);
+    assert.equal(await page.evaluate(() => reopenCalls), 0, 'Already restored window does not reopen');
+    await page.evaluate(() => tree.nodes['reopen-window'].deleteSelf({ reason: 'tree_nodeDeleted' }));
+
     // A closed window containing just one leaf tab is one deletion action,
     // whether expanded or collapsed, and undo restores both nodes.
     const singleTabDeletion = await page.evaluate(async () => {
@@ -908,8 +985,124 @@ const server = http.createServer(async (req, res) => {
     await page.locator('#dup-count').waitFor({ state: 'hidden' });
     await page.evaluate(() => { tree.$topBar.classList.remove('hidden'); tree.$bottomBar.classList.remove('hidden'); });
     await page.locator('#dup-count').waitFor({ state: 'visible' });
+    // Historical page details follow the cursor and refresh while selected.
+    await page.evaluate(async () => {
+      await tree.setZoomLevel(1, tree.zoomLevel);
+      await tree.action_unmarkAll({ type: 'keydown' });
+      const node = await tree.windowNode.addChild(tree.windowNode.nodes.length,
+        { id: 'history-details', label: 'Research', note: 'Compare the earlier pages.',
+          url: 'https://example.test/start', title: 'Starting page', render: true },
+        { reason: 'tree_nodeAdded' });
+      await node.setTabFields({ url: `https://example.test/${'long-path-'.repeat(12)}`,
+        title: '<img src=x onerror="window.historyInjected=true">' },
+        { reason: 'tree_nodeChanged', when: 1700000000000 });
+      await node.setTabFields({ url: 'https://example.test/research', title: 'Research page' },
+        { reason: 'tree_nodeChanged', when: 1700000001000 });
+      await tree.windowNode.addChild(tree.windowNode.nodes.length,
+        { id: 'no-history-details', url: 'https://example.test/fresh', render: true },
+        { reason: 'tree_nodeAdded' });
+      tree.detailsState = 0;
+      tree.$renderDetailsBtn();
+      await tree.setCursor(node, { instant: true });
+    });
+    await page.locator('#details-btn').click();
+    assert.equal(await page.locator('#details-btn').innerText(), 'Notes');
+    assert.equal(await page.locator('#detail-history').isVisible(), false,
+      'Notes mode hides tab history');
+    await page.locator('#details-btn').click();
+    assert.equal(await page.locator('#detail-history > b').innerText(), 'History (2)');
+    assert.deepEqual(await page.locator('.history-title').allTextContents(),
+      ['<img src=x onerror="window.historyInjected=true">', 'Starting page'],
+      'Historical URL/title pairs display newest first');
+    assert.equal(await page.locator('#detail-history img').count(), 0,
+      'Historical titles are rendered as literal text');
+    assert.equal(await page.evaluate(() => window.historyInjected), undefined);
+    assert.match(await page.locator('.history-time').first().innerText(), /^URL changed /);
+    assert.match(await page.locator('#detail-title').innerText(), /Research page/);
+    assert.match(await page.locator('#detail-url').innerText(), /https:\/\/example.test\/research/);
+
+    await page.evaluate(() => tree.tree_nodeChanged({
+      nodeId: 'history-details', type: 'setTabFields',
+      changes: { url: 'https://example.test/summary', title: 'Summary page' },
+      when: 1700000002000
+    }));
+    assert.equal(await page.locator('#detail-history > b').innerText(), 'History (3)',
+      'A selected tab refreshes history without reselecting it');
+    assert.equal(await page.locator('.history-title').first().innerText(), 'Research page');
+    assert.equal(await page.locator('.history-url').first().innerText(),
+      'https://example.test/research');
+
+    for (const theme of ['tk-night', 'tk-day']) {
+      await page.locator('#theme-variant').evaluate((el, theme) => {
+        el.href = `/themes/${theme}.css`;
+      }, theme);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      const fits = await page.locator('#details-box').evaluate(box =>
+        box.scrollWidth <= box.clientWidth);
+      assert.equal(fits, true, 'Long historical URLs fit a narrow Details box');
+      if (process.env.SCREENSHOT_DIR) {
+        await page.locator('#details-box').evaluate(box => {
+          const heading = document.querySelector('#detail-history');
+          box.scrollTop += heading.getBoundingClientRect().top - box.getBoundingClientRect().top - 8;
+        });
+        await page.mouse.move(-10, -10);
+        await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `${theme}-tab-history.png`) });
+      }
+    }
+    await page.evaluate(() => tree.setCursor(tree.nodes['no-history-details'], { instant: true }));
+    assert.equal(await page.locator('#detail-history').isVisible(), false,
+      'Selecting a fresh tab hides the previous tab history');
+    assert.equal(await page.locator('#detail-history').textContent(), '');
+    await page.evaluate(() => tree.setCursor(tree.nodes['history-details'], { instant: true }));
+    await page.locator('#details-btn').click();
+    assert.equal(await page.locator('#details-box').isVisible(), false);
+    await page.locator('#details-btn').click();
+    assert.equal(await page.locator('#detail-history').isVisible(), false);
+    assert.equal(await page.locator('#detail-note').innerText(), 'Compare the earlier pages.');
+    await page.locator('#details-btn').click();
+    assert.equal(await page.locator('#detail-history > b').innerText(), 'History (3)');
+
+    await page.evaluate(async () => {
+      const node = tree.nodes['history-details'];
+      for (let i = 0; i < 12; i++)
+        await node.setTabFields({ url: `https://example.test/history-${i}`, title: `Page ${i}` },
+          { reason: 'tree_nodeChanged', when: 1700000010000 + i });
+      for (let i = 0; i < 12; i++)
+        await node.setTabFields({ title: `Price ${i}` },
+          { reason: 'tree_nodeChanged', when: 1700000020000 + i });
+    });
+    assert.equal(await page.locator('#detail-history > b').innerText(), 'History (16)');
+    assert.equal(await page.locator('#detail-history li[data-kind="title"]').count(), 8);
+    assert.equal(await page.locator('#detail-history li[data-kind="url"]').count(), 8);
+    assert.equal(await page.locator('.history-title').first().innerText(), 'Price 10');
+    assert.match(await page.locator('.history-time').first().innerText(), /^Title changed /);
+
+    const restoredView = await page.evaluate(async () => {
+      const previousWindow = tree.windowNode;
+      const records = tree.serializeNodes();
+      const current = records[previousWindow.id];
+      const restoredId = 'restored-original-window';
+      records[restoredId] = { ...current, id: restoredId, label: 'Restored research' };
+      delete records[previousWindow.id];
+      for (const record of Object.values(records)) {
+        if (record.parent === previousWindow.id) record.parent = restoredId;
+        record.nodes = record.nodes.map(id => id === previousWindow.id ? restoredId : id);
+      }
+      const send = chrome.runtime.sendMessage;
+      chrome.runtime.sendMessage = async message => message.msg === 'bkgd_getTree'
+        ? { nodes: records } : send(message);
+      tree.viewScope = 'window';
+      await tree.tree_browserRestored({ windowId: 7 });
+      chrome.runtime.sendMessage = send;
+      return { id: tree.windowNode.id, rendered: tree.viewRoot === tree.windowNode,
+        fresh: tree.windowNode !== previousWindow,
+        uniqueMarks: tree.markedNodes.length === new Set(tree.markedNodes).size };
+    });
+    assert.deepEqual(restoredView, { id: 'restored-original-window', rendered: true,
+      fresh: true, uniqueMarks: true }, 'Restoration rebinds the sidebar to the original window');
+    assert.equal(await page.locator('#noderestored-original-window').count(), 1);
     assert.deepEqual(errors, [], 'No browser JavaScript errors');
-    console.log('PASS: separate before/first-child move buttons, selection controls, range selection, live Dup count, active-tab reveal, move/drag/flatten undo and redo after tree changes, focus/pointer shading and keyboard gating, and both theme layouts');
+    console.log('PASS: separate before/first-child move buttons, selection controls, range selection, live Dup count, active-tab reveal, move/drag/flatten undo and redo after tree changes, focus/pointer shading and keyboard gating, large-window confirmation, live tab history details, and both theme layouts');
   } finally {
     await browser.close();
   }

@@ -7,6 +7,17 @@ What changed, and when?  You know the drill.
 
 Bug fixes:
 
+- Reconnect **Chrome crash-restored windows arriving after startup** to their
+  original tree entries. Pending recovery survives service-worker restarts,
+  waits for a complete unambiguous window match, and compares exact URLs,
+  pinned state, privacy mode, and the number of copies of each tab. Original
+  IDs, notes, tasks, bookmarks, and hierarchy are preserved. Only temporary,
+  unannotated entries created during that recovery are removed, in the same
+  database transaction as the new attachments; live browser tabs stay open.
+  Ambiguous or changed windows remain separate for manual review.
+  Preserve tabs already pinned in their initial browser-created event, before
+  synchronizing tab order, so restoration does not accidentally unpin them.
+
 - Prevent incomplete tree writes from sending items to **lost+found** when
   Chrome restarts the background worker while the extension stays enabled.
   Adds, moves, and deletes now commit all affected parent links together,
@@ -56,6 +67,20 @@ Bug fixes:
   tabs the browser is the source of truth.
 
 Changes:
+
+- Remember each tab's previous URL/title pairs and show them, newest first,
+  in the full Details box with the time each was replaced. History includes
+  title-only changes and navigation discovered after a background-worker
+  restart, and is retained in saved trees, backups, and crash restoration.
+  Keep up to 8 title-only changes and 8 URL changes per tab, independently,
+  so changing stock prices or unread counts cannot evict navigation history.
+  Changes to both fields count as URL changes. Repeated pairs within each
+  category are kept once, at their latest replacement time. Apply the same
+  limits to existing history and imported backups.
+
+- Ask for confirmation before reopening a saved window that would open more
+  than 10 tabs. Show the actual number of tabs to open and default to Cancel,
+  including when invoked by keyboard shortcut, double-click, or the load button.
 
 - New `Filter` toggle button in the sidebar's bottom bar, replacing the
   `Donate` button: when on, an input box appears above the bottom buttons,
