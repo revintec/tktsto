@@ -152,7 +152,7 @@
   #marked-actions button:not(#clear-marked-btn) svg { display: none; }
 }
 
-#dup-count {
+#dup-count, #backup-age {
   /* Outside the filtered content so its red stays red while shaded. */
   position: fixed;
   z-index: 3;
@@ -167,8 +167,12 @@
   pointer-events: none;
 }
 
+#backup-age {
+  transform: translate(-100%, -20%);
+}
+
 /* Shade only while this document has focus and the pointer is outside it. */
-body.pointer-away > :not(#dup-count) {
+body.pointer-away > :not(#dup-count):not(#backup-age) {
   filter: grayscale(0.9);
 }
 

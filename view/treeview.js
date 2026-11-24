@@ -77,7 +77,12 @@ export class TreeView extends Tree {
   }
 
   destroy () {
-    this.duplicateBadgeObserver?.disconnect();
+    this.toolbarBadgeObserver?.disconnect();
+    this.window.clearInterval(this.backupAgeTimer);
+    if (this.backupAgeRefresh) {
+      this.document.removeEventListener('visibilitychange', this.backupAgeRefresh);
+      this.window.removeEventListener('focus', this.backupAgeRefresh);
+    }
     this.selectionResizeObserver?.disconnect();
     if (this.selectionHighlightFrame) this.window.cancelAnimationFrame(this.selectionHighlightFrame);
   }
@@ -119,13 +124,14 @@ export class TreeView extends Tree {
     this.$dupCount = doc.getElementById('dup-count');
     this.$locateTabBtn = doc.getElementById('locate-tab-btn');
     if (! this.isInert && this.$dupCount && this.$dupBtn) {
-      this.duplicateBadgeObserver = new this.window.ResizeObserver(() => {
+      this.toolbarBadgeObserver = new this.window.ResizeObserver(() => {
         this.positionDuplicateBadge();
+        this.positionToolbarBadge(this.$backupAge, this.$backupBtn, true, 'right');
       });
-      this.duplicateBadgeObserver.observe(this.$bottomBar);
-      this.duplicateBadgeObserver.observe(doc.getElementById('bottom-area'));
-      this.duplicateBadgeObserver.observe(this.$dupBtn);
-      this.duplicateBadgeObserver.observe(doc.documentElement);
+      this.toolbarBadgeObserver.observe(this.$bottomBar);
+      this.toolbarBadgeObserver.observe(doc.getElementById('bottom-area'));
+      this.toolbarBadgeObserver.observe(this.$dupBtn);
+      this.toolbarBadgeObserver.observe(doc.documentElement);
     }
 
     this.$searchBar = doc.getElementById('search-bar');
@@ -172,6 +178,8 @@ export class TreeView extends Tree {
     this.$treeViewInTabBtn = doc.getElementById('tree-view-in-tab-btn');
     // click to save a session backup
     this.$backupBtn = doc.getElementById('backup-btn');
+    this.$backupAge = doc.getElementById('backup-age');
+    if (this.$backupBtn) this.toolbarBadgeObserver?.observe(this.$backupBtn);
     // open the extension's options page
     this.$optionsBtn = doc.getElementById('options-btn');
     // toggle the tree filter box
@@ -234,6 +242,7 @@ export class TreeView extends Tree {
       // in sync with config.
       this.$renderZoomButtons();
       this.$renderFlattenLoneChildBtn();
+      this.initBackupBadge();
       this.cfg.watch('hideZoomButtons', () => this.$renderZoomButtons());
       this.cfg.watch('flattenLoneChild',
         () => {
@@ -3716,14 +3725,49 @@ export class TreeView extends Tree {
   }
 
   positionDuplicateBadge () {
-    if (! this.$dupCount || ! this.$dupBtn) return;
-    const visible = this.duplicateCount > 0 && this.$dupBtn.getClientRects().length > 0;
-    this.$dupCount.classList.toggle('hidden', ! visible);
+    this.positionToolbarBadge(this.$dupCount, this.$dupBtn, this.duplicateCount > 0);
+  }
+
+  positionToolbarBadge ($badge, $button, visible = true, side = 'left') {
+    if (!$badge || !$button) return;
+    visible = visible && $button.getClientRects().length > 0;
+    $badge.classList.toggle('hidden', !visible);
     if (! visible) return;
-    const rect = this.$dupBtn.getBoundingClientRect();
+    const rect = $button.getBoundingClientRect();
     const zoom = parseFloat(this.window.getComputedStyle(this.document.documentElement).zoom) || 1;
-    this.$dupCount.style.left = `${Math.max(rect.left / zoom, this.$dupCount.offsetWidth * 0.4)}px`;
-    this.$dupCount.style.top = `${Math.max(rect.top / zoom, this.$dupCount.offsetHeight * 0.2)}px`;
+    const left = side === 'right' ? rect.right / zoom
+      : Math.max(rect.left / zoom, $badge.offsetWidth * 0.4);
+    $badge.style.left = `${left}px`;
+    $badge.style.top = `${Math.max(rect.top / zoom, $badge.offsetHeight * 0.2)}px`;
+  }
+
+  initBackupBadge () {
+    if (!this.$backupAge || !this.$backupBtn || this.backupAgeRefresh) return;
+    this.backupAgeRefresh = () => this.renderBackupAge();
+    this.cfg.watch('localBackupLastTimeCompleted', this.backupAgeRefresh);
+    this.backupAgeTimer = this.window.setInterval(this.backupAgeRefresh, 60 * 1000);
+    this.document.addEventListener('visibilitychange', this.backupAgeRefresh);
+    this.window.addEventListener('focus', this.backupAgeRefresh);
+    this.renderBackupAge();
+  }
+
+  renderBackupAge () {
+    if (!this.$backupAge || !this.$backupBtn) return;
+    const lastBackup = this.cfg.localBackupLastTimeCompleted;
+    let title = 'No successful backup recorded';
+    let badge = 'Never';
+    if (Number.isFinite(lastBackup) && lastBackup > 0) {
+      const hours = Math.max(0, Math.floor((Date.now() - lastBackup) / 3600000));
+      badge = String(hours);
+      title = `${hours} ${hours === 1 ? 'hour' : 'hours'} since the last successful backup (${new Date(lastBackup).toLocaleString()})`;
+    }
+    // Avoid repeated live-region announcements while the hour is unchanged.
+    if (this.$backupAge.textContent !== badge) this.$backupAge.textContent = badge;
+    if (this.$backupAge.getAttribute('aria-label') !== title)
+      this.$backupAge.setAttribute('aria-label', title);
+    this.$backupBtn.title = title;
+    this.$backupBtn.setAttribute('aria-label', `Backup — ${title}`);
+    this.positionToolbarBadge(this.$backupAge, this.$backupBtn, true, 'right');
   }
 
   onBackupBtnClick () {

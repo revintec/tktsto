@@ -6,10 +6,11 @@
 import { api, isChrome, isFirefox } from '/api.js';
 
 import {
-  log, debug, warn, error, fmtDate, emit, jsonSchema, isIllegalURL
+  log, debug, warn, error, fmtDate, emit, validateBackupFile, isIllegalURL
 } from '/common/common.js';
 import { Mutex } from '/common/mutex.js';
 import { Config } from '/common/config.js';
+import { selectSettings } from '/common/settings.js';
 import { IdGenerator } from '/common/id-generator.js';
 import * as sidepanel from './sidepanel.js';
 import { TreeStore } from './treestore.js';
@@ -1147,7 +1148,25 @@ class Bkgd {
   }
 
   async bkgd_importBackupFile (msg) {
-    return this.importBackupFileGeneric(msg, this.importBackupFile);
+    let total = 0;
+    let sessionImported = false;
+    try {
+      validateBackupFile(msg.data);
+      // Validate every selection before changing either the tree or settings.
+      // Older callers omit settingsKeys and continue to import only the tree.
+      const selected = selectSettings(msg.data.settings, msg.settingsKeys);
+      if (msg.importSession !== false) {
+        total = await this.importBackupFile(msg.data, msg.filename);
+        sessionImported = true;
+      }
+      const settingsImported = Object.keys(selected).length;
+      if (settingsImported) await api.storage.local.set(selected);
+      return { total, sessionImported, settingsImported, status: 'Import complete' };
+    } catch (err) {
+      error(err);
+      return { total, sessionImported, settingsImported: 0, error: String(err),
+        status: `Import error: ${err}` };
+    }
   }
 
   bkgd_importTabsOutliner (msg) {
@@ -1162,6 +1181,7 @@ class Bkgd {
       response.status = `${total} nodes imported`;
     } catch (err) {
       response.status = `Import error: ${err}`;
+      response.error = String(err);
       error(err);
     }
     response.total = total;
@@ -1169,11 +1189,7 @@ class Bkgd {
   }
 
   async importBackupFile(json, filename) {
-    if (jsonSchema !== json.$schema) {
-      error('Does not appear to be a TKTSTO file.');
-      return -1;
-    }
-    if (! json.nodes['root']) return -1;
+    validateBackupFile(json);
 
     // don't import to an incomplete tree
     await this.treeLoaded;
@@ -1200,8 +1216,8 @@ class Bkgd {
       // root node needs special care
       if ('root' === id) {
         const itimeStr = fmtDate(Date.now());
-        const ctimeStr = fmtDate(json.metadata.sessionStartDate);
-        const etimeStr = fmtDate(json.metadata.exportDate);
+        const ctimeStr = fmtDate(json.metadata?.sessionStartDate);
+        const etimeStr = fmtDate(json.metadata?.exportDate);
         // imports always start collapsed
         // (avoids a ton of drawing during load)
         node.expanded = false;

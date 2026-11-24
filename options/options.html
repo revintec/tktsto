@@ -382,6 +382,10 @@
 
   <div>
     <p>
+    Backups include your session tree and TKTSTO settings. You can review and
+    choose which changed settings to import when restoring a backup.
+    </p>
+    <p>
     Backup files can either be human friendly (easier to view in a text editor)
     or not (smaller files).
     </p>
@@ -430,10 +434,37 @@
   <h4>TKTSTO files</h4>
   <div class="file-input">
   <!-- <form id="tktsto-import-form" accept-charset="utf-8"> -->
-    <input type="file" id="tktsto-file-input">
-    <button id="tktsto-file-button">Restore</button>
+    <input type="file" id="tktsto-file-input" accept=".json,application/json" aria-label="TKTSTO backup file">
+    <button id="tktsto-file-button">Review backup</button>
     <!-- </form> -->
   </div>
+
+  <section id="backup-import-preview" hidden aria-labelledby="backup-import-title">
+    <h3 id="backup-import-title" tabindex="-1">Review backup import</h3>
+    <p id="backup-import-filename"></p>
+    <p><label><input type="checkbox" id="backup-import-session" checked>
+      Add the saved session to my current tree</label></p>
+    <p>Uncheck this to import settings only.</p>
+    <h4>Settings changes</h4>
+    <p id="backup-settings-summary"></p>
+    <p id="backup-settings-ignored"></p>
+    <div id="backup-settings-actions">
+      <button type="button" id="backup-select-all">Select all</button>
+      <button type="button" id="backup-select-none">Select none</button>
+      <span id="backup-settings-selected" aria-live="polite"></span>
+    </div>
+    <div id="backup-settings-table">
+      <table>
+        <thead><tr><th scope="col">Import setting</th><th scope="col">Current value</th><th scope="col">Backup value</th></tr></thead>
+        <tbody id="backup-settings-diff"></tbody>
+      </table>
+    </div>
+    <div class="backup-import-buttons">
+      <button type="button" id="backup-import-confirm">Import selected</button>
+      <button type="button" id="backup-import-cancel">Cancel</button>
+    </div>
+  </section>
+  <p id="backup-import-status" role="status" aria-live="polite"></p>
 
   <h4>Tabs Outliner files</h4>
   <p>If you used Tabs Outliner and have session file backups, import those

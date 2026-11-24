@@ -5,9 +5,9 @@
 "use strict";
 import { api, isChrome, isFirefox } from '/api.js';
 
-import { log, warn, debug, emit } from '/common/common.js';
+import { log, warn, debug, error, emit, validateBackupFile } from '/common/common.js';
 import { ThemedPage } from '/themes/themes.js';
-import { Config } from '/common/config.js';
+import { settings, settingsDefaults, readSettings, diffSettings, formatSetting } from '/common/settings.js';
 
 log('options.js running');
 
@@ -19,47 +19,7 @@ class OptionsPage extends ThemedPage {
       '/options/options'
     );
     this.$doc = document;
-    this.cfgDefaults = {
-      clientId: null,
-      // backups
-      humanFriendlyBackups: false,
-      localBackupInterval: null,
-      // theme
-      theme: 'TK Night',
-      expandedRowPrefix: false,
-      alwaysShowNodeStats: true,
-      wasLoadedNodeStats: true,
-      showFavicons: true,
-      hideTreeLines: false,
-      hideCursorTreeLines: false,
-      hideWindowTreeLines: true,
-      flattenLoneChild: true,
-      fontFamily: '',
-      indentMargin: '',
-      indentMarginWindow: '',
-      indentPadding: '',
-      indentPaddingWindow: '',
-      expandedBranchBottomPadding: '',
-      leafToBranchSpacing: '',
-      windowTopLevelNodeSpacing: '',
-      detailsBoxHeight: '',
-      detailsBoxHeightNotesOnly: '',
-      userStyles: '',
-      // TreeView behavior
-      cursorFollowsActiveTab: true,
-      activeTabExpandsItsParents: true,
-      pinnedTabsOpenNewTabsPinnedToo: false,
-      naturalTabOrdering: true,
-      convertFromWindowWhenDroppedIntoWindow: true,
-      hideTopButtonsDuringSearch: false,
-      hideZoomButtons: true,
-      hideCollapsedTabs: false,
-      loadExpandedBranchStyle: 'ask',
-      loadCollapsedBranchStyle: 'ask',
-      unloadExpandedBranchStyle: 'ask',
-      unloadCollapsedBranchStyle: 'ask',
-      deleteExpandedBranchStyle: 'ask',
-    };
+    this.cfgDefaults = { ...settingsDefaults };
   }
 
   async init () {
@@ -281,80 +241,172 @@ class OptionsPage extends ThemedPage {
 
   initSessionRestoreForm () {
     const doc = this.$doc;
-    // generate an onClicked handler
-    function fileUploadHandler($id, signalName) {
-      function onClicked () {
-        log(`${$id}-button clicked`);
-        const $button = doc.getElementById(`${$id}-button`);
-        const fileInput = doc.getElementById(`${$id}-input`);
-        const $buttonOrigText = $button.innerText;
-        if (fileInput.files.length === 0) {
-          alert("Please select a file first.");
+    this.$importPreview = doc.getElementById('backup-import-preview');
+    this.$importStatus = doc.getElementById('backup-import-status');
+    this.$importSession = doc.getElementById('backup-import-session');
+    this.$importConfirm = doc.getElementById('backup-import-confirm');
+    this.$importSession.addEventListener('change', () => this.updateImportSelection());
+    this.$importConfirm.addEventListener('click', () => this.importReviewedBackup());
+    doc.getElementById('backup-import-cancel').addEventListener('click', () => {
+      this.clearImportPreview();
+      this.$importStatus.textContent = 'Import cancelled. Nothing was changed.';
+    });
+    for (const [id, checked] of [['backup-select-all', true], ['backup-select-none', false]]) {
+      doc.getElementById(id).addEventListener('click', () => {
+        for (const checkbox of this.importCheckboxes) checkbox.checked = checked;
+        this.updateImportSelection();
+      });
+    }
+    doc.getElementById('tktsto-file-input').addEventListener('change', () => {
+      this.clearImportPreview();
+      this.$importStatus.textContent = '';
+    });
+    for (const [base, isTktsto] of [['tktsto-file', true], ['tabs-outliner-file', false]]) {
+      const button = doc.getElementById(`${base}-button`);
+      button.addEventListener('click', async () => {
+        const fileInput = doc.getElementById(`${base}-input`);
+        const file = fileInput.files[0];
+        if (!file) {
+          this.$importStatus.textContent = 'Please select a JSON file first.';
           return;
         }
-
-        //const file = fileInput.files[0]; {
-        for (const file of fileInput.files) {
-          log(`loading ${file.name} (${file.type}) (${file.size} bytes) ...`);
-          const reader = new FileReader();
-
-          if ('application/json' !== file.type) {
-            alert(`Unsupported file type "${file.type}", must be "application/json".`);
-            return;
+        if (isTktsto) this.clearImportPreview();
+        const originalText = button.textContent;
+        button.disabled = true;
+        fileInput.disabled = true;
+        button.textContent = 'Loading…';
+        this.$importStatus.textContent = '';
+        try {
+          // Some browsers report an empty MIME type for JSON files.
+          const json = JSON.parse(await file.text());
+          if (isTktsto) {
+            await this.reviewBackup(json, file.name);
+          } else {
+            const response = await emit('bkgd_importTabsOutliner', { data: json, filename: file.name });
+            if (!response || response.error || response.total < 0)
+              throw new Error(response?.error || 'The session could not be imported.');
+            this.$importStatus.textContent = `${response.total} nodes imported from “${file.name}”.`;
           }
+        } catch (err) {
+          warn('Import failed:', err);
+          this.$importStatus.textContent = `Could not import “${file.name}”: ${err.message}`;
+        } finally {
+          button.disabled = false;
+          fileInput.disabled = false;
+          button.textContent = originalText;
+        }
+      });
+    }
+    this.clearImportPreview();
+  }
 
-          reader.onerror = function (event) {
-            err = 'file load failed';
-            warn(err, event);
-            alert(err);
-          }
+  clearImportPreview () {
+    this.pendingBackup = null;
+    this.importCheckboxes = [];
+    this.$importPreview.hidden = true;
+    this.$doc.getElementById('backup-settings-diff').replaceChildren();
+  }
 
-          reader.onload = function (event) {
-            log(`${$id} loaded`);
-            let fileContent = event.target.result;
-            // try parsing as json
-            try {
-              const jsonData = JSON.parse(fileContent);
-              // send to bkgd
-              emit(signalName,
-                { data: jsonData, filename: file.name })
-                .then((response) => {
-                  log(`${response.total} nodes imported from: "${file.name}"`);
-                  $button.innerText = $buttonOrigText;
-                  alert(`${response.total} nodes imported from: "${file.name}"`);
-                });
-            } catch (error) {
-              warn("Error parsing JSON:", error);
-              $button.innerText = $buttonOrigText;
-              alert(`The file is not valid JSON: "${file.name}"`);
-            }
-          };
+  async reviewBackup (data, filename) {
+    validateBackupFile(data);
+    // Finish edits still waiting on a debounce before comparing saved values.
+    await Promise.all(this.options.filter(option => option.debounceTimer)
+      .map(option => option.parseAndSave()));
+    const { changes, ignored } = diffSettings(data.settings, await readSettings());
+    const doc = this.$doc;
+    this.pendingBackup = { data, filename };
+    doc.getElementById('backup-import-filename').textContent = filename;
+    this.$importSession.checked = true;
+    doc.getElementById('backup-settings-summary').textContent = data.settings === undefined
+      ? 'This older backup has no settings. Your current settings will be kept.'
+      : changes.length
+        ? `${changes.length} changed settings. Only checked settings will be imported.`
+        : 'No settings changes. Your current settings will be kept.';
+    doc.getElementById('backup-settings-ignored').textContent = ignored.length
+      ? `Skipped unknown or invalid settings: ${ignored.join(', ')}.` : '';
+    doc.getElementById('backup-settings-table').hidden = !changes.length;
+    doc.getElementById('backup-settings-actions').hidden = !changes.length;
+    const body = doc.getElementById('backup-settings-diff');
+    for (const change of changes) {
+      const row = doc.createElement('tr');
+      const name = doc.createElement('th');
+      name.scope = 'row';
+      const label = doc.createElement('label');
+      const checkbox = doc.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.setting = change.key;
+      // IDs must remain unique when combining sessions from different browsers.
+      checkbox.checked = change.key !== 'clientId';
+      checkbox.addEventListener('change', () => this.updateImportSelection());
+      this.importCheckboxes.push(checkbox);
+      label.append(checkbox, ` ${settings[change.key].label}`);
+      name.append(label);
+      if (change.key === 'clientId') {
+        const note = doc.createElement('small');
+        note.textContent = 'Each browser should keep a unique client ID.';
+        name.append(note);
+      }
+      row.append(name);
+      for (const [kind, value] of [['current', change.current], ['incoming', change.incoming]]) {
+        const cell = doc.createElement('td');
+        const text = doc.createElement('pre');
+        text.className = `setting-value setting-${kind}`;
+        text.textContent = formatSetting(change.key, value);
+        cell.append(text);
+        row.append(cell);
+      }
+      body.append(row);
+    }
+    this.$importPreview.hidden = false;
+    this.updateImportSelection();
+    doc.getElementById('backup-import-title').focus();
+  }
 
-          // read the file; it'll trigger reader.onload when it's ready
-          log(`loading ${file.name} now ...`);
-          reader.readAsText(file);
-          $button.innerText = '... Loading ...';
+  updateImportSelection () {
+    const count = this.importCheckboxes.filter(checkbox => checkbox.checked).length;
+    this.$doc.getElementById('backup-settings-selected').textContent = `${count} settings selected`;
+    this.$importConfirm.disabled = !this.$importSession.checked && !count;
+  }
+
+  async importReviewedBackup () {
+    if (!this.pendingBackup || this.importingBackup) return;
+    const { data, filename } = this.pendingBackup;
+    const settingsKeys = this.importCheckboxes.filter(checkbox => checkbox.checked)
+      .map(checkbox => checkbox.dataset.setting);
+    const importSession = this.$importSession.checked;
+    if (!importSession && !settingsKeys.length) return;
+    this.importingBackup = true;
+    const controls = [...this.$importPreview.querySelectorAll('input, button'),
+      this.$doc.getElementById('tktsto-file-input'), this.$doc.getElementById('tktsto-file-button')];
+    controls.forEach(control => { control.disabled = true; });
+    this.$importStatus.textContent = 'Importing…';
+    try {
+      const response = await emit('bkgd_importBackupFile', { data, filename, settingsKeys, importSession });
+      if (!response) throw new Error('The background service did not respond.');
+      if (response.error) {
+        // A settings write can fail after the session was successfully added.
+        // Do not offer to add the same session again on retry.
+        if (response.sessionImported) this.$importSession.checked = false;
+        throw new Error(`${response.total} nodes imported; ${response.error}`);
+      }
+      // Refresh controls even if the storage change notification is delayed.
+      for (const option of this.options) {
+        if (settingsKeys.includes(option.cfgKey)) {
+          const value = data.settings[option.cfgKey];
+          option.cfg[option.cfgKey] = value;
+          option.showSavedValue(value);
         }
       }
-      return onClicked;
+      this.clearImportPreview();
+      this.$importStatus.textContent = `${response.total} nodes and ${response.settingsImported} settings imported from “${filename}”.`;
+    } catch (err) {
+      warn('Import failed:', err);
+      this.$importStatus.textContent = `Import failed: ${err.message}`;
+    } finally {
+      this.importingBackup = false;
+      controls.forEach(control => { control.disabled = false; });
+      this.updateImportSelection();
     }
-
-    let base;
-
-    // handle tktsto imports
-    base = 'tktsto-file';
-    const importBackupButtonClicked = fileUploadHandler(
-      base, 'bkgd_importBackupFile');
-    doc.getElementById(`${base}-button`).addEventListener("click",
-      importBackupButtonClicked);
-
-    // handle tabs-outliner imports
-    base = 'tabs-outliner-file';
-    const tabsOutlinerButtonClicked = fileUploadHandler(
-      base, 'bkgd_importTabsOutliner');
-    doc.getElementById(`${base}-button`).addEventListener("click",
-      tabsOutlinerButtonClicked);
-
   }
 
   greyOut (elementId) {
@@ -396,6 +448,7 @@ class Option {
     if (this.toStr) valueStr = this.toStr(valueStr);
 
     this.setValue(valueStr);
+    cfg.watch(this.cfgKey, (key, newValue) => this.showSavedValue(newValue));
 
     // save changes when relevant event fires
     let eventName = 'input';
@@ -434,12 +487,21 @@ class Option {
     }
   }
 
-  parseAndSave () {
+  showSavedValue (value) {
+    clearTimeout(this.debounceTimer);
+    this.debounceTimer = null;
+    this.setValue(this.toStr ? this.toStr(value) : value);
+    this.$elem.classList.remove('unsaved');
+  }
+
+  async parseAndSave () {
+    clearTimeout(this.debounceTimer);
+    this.debounceTimer = null;
     const rawValue = this.getValue();
     let value = rawValue;
     if (this.fromStr) value = this.fromStr(value);
     if (undefined !== value) {
-      this.cfg.set(this.cfgKey, value);
+      await this.cfg.set(this.cfgKey, value);
 
       // update widget with sanitized value
       let valueStr = value;

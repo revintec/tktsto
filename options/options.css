@@ -16,3 +16,87 @@
   margin: unset;
 }
 
+#backup-import-preview {
+  max-width: 72rem;
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--dialog-border-color);
+  border-radius: var(--dialog-radius);
+  color: var(--doc-text-fg);
+  background: var(--doc-page-bg);
+}
+
+#backup-import-filename, #backup-settings-ignored, #backup-import-status {
+  overflow-wrap: anywhere;
+}
+
+#backup-settings-table {
+  overflow: auto;
+  max-height: 55vh;
+  margin: 0.75rem 0;
+}
+
+#backup-settings-table table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+#backup-settings-table th, #backup-settings-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--dialog-border-color);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+#backup-settings-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--doc-page-bg);
+}
+
+#backup-settings-table tbody th {
+  font-weight: normal;
+}
+
+#backup-settings-table small {
+  display: block;
+  margin-top: 0.4rem;
+}
+
+#backup-settings-table input[type="checkbox"] {
+  margin: 0;
+  min-width: unset;
+}
+
+#backup-settings-table .setting-value {
+  margin: 0;
+  padding: 0;
+  max-width: none;
+  max-height: 12rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+
+#backup-settings-table .setting-incoming {
+  color: var(--tab-loaded-fg);
+}
+
+.backup-import-buttons, #backup-settings-actions:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+#backup-import-preview button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+

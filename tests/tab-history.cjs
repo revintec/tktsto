@@ -38,7 +38,7 @@ const server = http.createServer(async (req, res) => {
             await Promise.all(panels.map(panel => panel[message.msg]?.(structuredClone(message))));
             return {};
           } },
-        storage: { local: { set: async () => {} },
+        storage: { local: { get: async defaults => ({ ...defaults }), set: async () => {} },
           session: { get: async () => ({}), set: async () => {} } },
         windows: { get: async id => ({ id, type: 'normal' }), getAll: async () => windows },
         tabs: { remove: async () => {}, query: async () => [{ id: 70, windowId: 7 }] }
@@ -121,7 +121,7 @@ const server = http.createServer(async (req, res) => {
       reloaded.rebuildNodeFromSerializedHash(reloaded.root, records);
       check(JSON.stringify(reloaded.nodes.tab.tabHistory) === JSON.stringify(tab.tabHistory),
         'History survives real IndexedDB storage and tree reconstruction');
-      const backup = tree.makeBackupObject(tree.root, new Date());
+      const backup = await tree.makeBackupObject(tree.root, new Date());
       const imported = await bkgd.importBackupFile(structuredClone(backup), 'history.json');
       check(imported > 0, 'Backup imports successfully');
       const importedTab = Object.values(tree.nodes).find(n => n !== tab && n.url === tab.url);
@@ -233,7 +233,7 @@ const server = http.createServer(async (req, res) => {
       passed.push('old database histories are classified, trimmed and persisted during startup');
 
       panels = [];
-      const legacyBackup = tree.makeBackupObject(tree.root, new Date());
+      const legacyBackup = await tree.makeBackupObject(tree.root, new Date());
       legacyBackup.nodes.limited.tabHistory = legacy;
       await bkgd.importBackupFile(structuredClone(legacyBackup), 'old-history.json');
       const importedLegacy = Object.values(tree.nodes).find(n => n.id !== 'limited'

@@ -129,6 +129,13 @@ function logCaller (logger, depth, msg, ...args) {
 
 export const jsonSchema = 'https://toykeeper.net/tktsto/session-backup-json-schema-v1';
 
+export function validateBackupFile (json) {
+  if (json?.$schema !== jsonSchema || !json.nodes || Array.isArray(json.nodes)
+      || !json.nodes.root || typeof json.nodes.root !== 'object'
+      || Array.isArray(json.nodes.root))
+    throw new Error('This is not a valid TKTSTO backup (session root is required).');
+}
+
 
 // unused
 // make a date tuple similar to python

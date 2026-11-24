@@ -15,6 +15,7 @@ import {
 import { Node } from '/common/node.js';
 import { Mutex } from '/common/mutex.js';
 import { Config } from '/common/config.js';
+import { readSettings } from '/common/settings.js';
 
 
 export class Tree {
@@ -278,7 +279,8 @@ export class Tree {
     return numLoaded;
   }
 
-  makeBackupObject (rootNode, when) {
+  async makeBackupObject (rootNode, when) {
+    const settings = await readSettings();
     const obj = {};
     // TODO: actually write and publish the schema file
     obj.$schema = jsonSchema;
@@ -287,9 +289,10 @@ export class Tree {
     obj.metadata.exportDate = Number(when);
     obj.metadata.sessionStartDate = Number(rootNode.ctime);
     // attach the client ID
-    let clientId = this.cfg.clientId;
+    let clientId = settings.clientId;
     if (! clientId) clientId = '??';
     obj.metadata.clientId = clientId;
+    obj.settings = settings;
     // attach the actual tree / node data
     obj.nodes = this.serializeNodes(true);
     return obj;
@@ -303,10 +306,16 @@ export class Tree {
     await this.treeLoaded;  // wait until tree is ready
 
     const when = new Date();
-    // determine whether to pretty-print the data
-    const prettyPrint = this.cfg.humanFriendlyBackups ? 2 : 0;
     // generate the file's raw data
-    const backup = this.makeBackupObject(this.root, when);
+    let backup;
+    try {
+      backup = await this.makeBackupObject(this.root, when);
+    } catch (err) {
+      this.localBackupInProgress = false;
+      throw err;
+    }
+    // determine whether to pretty-print the data
+    const prettyPrint = backup.settings.humanFriendlyBackups ? 2 : 0;
     const jsonString = JSON.stringify(backup, null, prettyPrint);
     const blob = new Blob([jsonString], { type: "application/json" });
     // generate the URL to download
